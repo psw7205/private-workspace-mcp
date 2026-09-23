@@ -94,6 +94,24 @@ read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(pro
 
 정수 설정은 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다. 값이 잘못되면 stderr에 이유를 출력하고 exit code 1로 종료한다(fail closed). stdout은 MCP protocol 전용이다. startup 메시지는 stderr로, audit log는 `WORKSPACE_AUDIT_LOG`가 있으면 그 파일로, 없으면 stderr로 나간다.
 
+## 설치 (release)
+
+daemon을 띄울 머신에는 GitHub Release의 `index.mjs` 하나만 설치한다. runtime dependency가 bundle에 들어 있어 Node 26 외에 source, pnpm, `node_modules`가 필요 없다. 버전마다 directory를 두고 `current` symlink로 가리킨다.
+
+```sh
+VERSION=v0.1.0
+DIR="$HOME/.local/share/private-workspace-mcp"
+mkdir -p "$DIR/$VERSION" && cd "$DIR/$VERSION"
+gh release download "$VERSION" --repo psw7205/private-workspace-mcp
+shasum -a 256 -c SHA256SUMS
+gh attestation verify index.mjs --repo psw7205/private-workspace-mcp
+ln -sfn "$VERSION" "$DIR/current"
+```
+
+- `gh attestation verify`는 파일이 이 repo의 release workflow에서 build됐는지 Sigstore 서명으로 확인한다. checksum만으로는 Release asset이 바뀐 경우를 막지 못한다.
+- 같은 방법으로 새 버전을 받고 `current`를 바꾼 뒤 daemon을 다시 띄우면 업그레이드가 끝난다. rollback은 `current`를 이전 버전으로 되돌리면 된다. profile은 고치지 않는다.
+- source를 build해 쓰려면 아래 `<entry>` 자리에 repo의 `dist/index.js`를 넣고, 업그레이드할 때 `pnpm build`를 다시 한다.
+
 ## OpenAI Secure MCP Tunnel 연결
 
 `tunnel-client`는 Homebrew(`brew install openai/tools/tunnel-client`)로 설치한다. child는 `tunnel-client`의 환경 변수를 상속하고, child의 stderr는 `tunnel-client` 로그로 전달된다(`tunnel-client` 0.0.14에서 확인). 서버 설정은 command에 명시하고, runtime key는 child에 넘기지 않는다.
@@ -107,13 +125,13 @@ cp .env.example .env    # TUNNEL_ID, API_KEY 입력
 profile은 한 번만 만든다. profile은 `~/.config/tunnel-client/`에 머신별로 저장되고 절대 경로가 들어가므로 git으로 옮겨지지 않는다.
 
 ```sh
-pnpm build
 set -a && . ./.env && set +a
 tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
   --tunnel-id "$TUNNEL_ID" \
-  --mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY WORKSPACE_ROOT=<project> WORKSPACE_MODE=read-write WORKSPACE_AUDIT_LOG=<audit-dir>/audit.jsonl $(mise which node) $(pwd)/dist/index.js"
+  --mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY WORKSPACE_ROOT=<project> WORKSPACE_MODE=read-write WORKSPACE_AUDIT_LOG=<audit-dir>/audit.jsonl $(mise which node) <entry>"
 ```
 
+- `<entry>`는 release 설치면 `$HOME/.local/share/private-workspace-mcp/current/index.mjs`, source build면 repo의 `dist/index.js` 절대 경로다.
 - `<project>`는 agent 전용 directory의 절대 경로다(filesystem root와 home은 거부됨). `<audit-dir>`는 workspace 밖의 기존 directory다. 빼면 audit은 `tunnel-client` 로그로 간다.
 - node는 `$(mise which node)`로 절대 경로를 넣는다. `tunnel-client`를 띄우는 shell에 mise가 활성화돼 있지 않으면 PATH의 `node`가 Node 26이 아닐 수 있다. 경로와 mode를 바꾸려면 `tunnel-client profiles edit workspace-mcp`로 고친다.
 
@@ -148,7 +166,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 
 connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다. 새 버전에서 tool 목록, description, schema가 바뀌었으면 다음 순서로 반영한다. 내부 동작만 바뀌었으면 1까지만 한다.
 
-1. `pnpm build` 후 daemon을 다시 띄운다(profile은 `dist/index.js`를 실행한다).
+1. 새 release를 설치해 `current`를 바꾸고(source build면 `pnpm build`) daemon을 다시 띄운다.
 2. https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른다.
 3. 새 대화를 시작한다. 기존 대화에는 이전 tool 목록이 남을 수 있다.
 
@@ -166,12 +184,23 @@ Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspa
 pnpm typecheck     # TypeScript 7
 pnpm test          # unit + stdio integration (서버 process를 직접 spawn)
 pnpm build         # dist/index.js
+pnpm bundle        # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS
 pnpm e2e:tunnel    # tunnel-client dev proxy 경유 e2e (tunnel-client 필요, OpenAI credential 불필요)
 ```
 
 `pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, tunnel-client 종료 시 child 정리를 확인한다.
 
-CI(`.github/workflows/ci.yml`)는 ubuntu, macOS, windows에서 typecheck, test, build를 실행한다.
+`TEST_SERVER_ENTRY=release/index.mjs`를 주면 `test/stdio.test.ts`와 `pnpm e2e:tunnel`이 source 대신 bundle을 실행한다.
+
+CI(`.github/workflows/ci.yml`)는 ubuntu, macOS, windows에서 typecheck, test, build를 실행하고, bundle로 stdio test를 한 번 더 돌린다.
+
+## 릴리즈
+
+1. `package.json`의 `version`과 `src/server/server.ts`의 `SERVER_VERSION`을 올린다. 둘이 다르면 stdio test가 실패한다.
+2. `main`에 commit하고 push한 뒤 CI가 통과하는지 본다.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z`. `.github/workflows/release.yml`이 tag와 `package.json` version이 같은지 확인하고, test와 bundle 뒤에 attestation을 만들어 GitHub Release에 `index.mjs`, `index.mjs.map`, `THIRD_PARTY_LICENSES.txt`, `SHA256SUMS`를 올린다.
+
+bundle은 minify하지 않는다. release된 파일을 그대로 읽고 감사할 수 있게 하기 위해서다.
 
 ## 구조
 

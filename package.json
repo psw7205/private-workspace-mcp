@@ -16,6 +16,7 @@
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "bundle": "node --import tsx scripts/bundle.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^26.6.2",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "~7.0.2",
     "vitest": "^4.1.11"

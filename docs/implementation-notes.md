@@ -62,6 +62,14 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 |---|------|------|------|
 | M28 | 파일을 디렉터리로 쓴 경로 | `resolveExisting`에서 `realpath`가 `ENOENT`면 가장 가까운 존재하는 상위 경로를 `stat`하고, directory가 아니면 `NOT_A_DIRECTORY`. 상위를 `stat`할 수 없으면 원래 `FILE_NOT_FOUND` | `README.md/x`에 POSIX는 `ENOTDIR`, Windows는 `ENOENT`를 줘서 첫 Windows CI job에서 오류 code가 갈렸다. 거부 여부는 같고 code만 OS와 무관하게 맞춘다. symlink 상위는 POSIX `realpath`처럼 따라가서 판정한다 |
 
+### 1.2.4 릴리즈 결정 (2026-09-23)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M29 | 배포 형태 | `vX.Y.Z` tag에서 CI가 만든 단일 파일 ESM bundle(`index.mjs`, esbuild, minify 없음)을 GitHub Release로 배포. bundle에 들어간 package의 license 파일을 `THIRD_PARTY_LICENSES.txt`로 함께 올리고, license 파일이 없는 package가 있으면 bundle이 실패. npm publish, container image, Node SEA는 쓰지 않음 | 실행 머신에 Node 26만 있으면 되고 파일 하나라 버전 식별과 rollback이 쉬움. `npx`식 실행은 daemon이 뜰 때 registry에서 받아오므로 supply-chain 위험이 있음. container는 `tunnel-client` 경유가 미검증(6절). Node SEA는 platform별 build와 codesign이 필요해 과함. ADR-001의 Go/단일 binary 재검토 조건에는 해당하지 않음(Node 런타임은 유지) |
+| M30 | 무결성 | release는 CI에서만 build. tag와 `package.json` version이 다르면 실패. `SHA256SUMS`의 모든 파일에 `actions/attest`로 build provenance를 붙이고, 설치 시 `shasum -c`와 `gh attestation verify`로 확인. `SERVER_VERSION`은 stdio test가 `package.json`과 비교. bundle이 build 머신의 project 경로를 담으면 실패 | public repo라 attestation을 무료 plan에서도 쓸 수 있음. checksum은 같은 Release에 있어 asset 교체를 막지 못하므로 서명된 provenance로 보완 |
+| M31 | 설치 layout | `$HOME/.local/share/private-workspace-mcp/<version>/`에 풀고 `current` symlink를 profile이 가리킴 | `tunnel-client` profile은 절대 경로를 담으므로 한 번만 만들고, 업그레이드와 rollback은 symlink 교체로 끝냄 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -143,6 +151,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 - Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(345), build 통과. Node 24 시절에는 root 사용자로도 확인
 - ChatGPT UI (2026-09-23): ChatGPT 웹 Developer mode에서 인증 없음으로 만든 Secure MCP Tunnel connector 경유로 hosted `tools/call`을 확인했다(PRD 15-1). `get_workspace_info`, `list_directory`, `read_file`이 성공했고, `write_file`은 `read_file`로 받은 revision을 넘겨 기존 내용을 보존한 채 항목을 추가했다. `.env` read는 `PATH_BLOCKED`로 거부됐고 message에 host 경로가 없었다. audit 파일에는 7건이 권한 `0600`으로 기록됐다. connector를 OAuth로 만들면 ChatGPT가 "MCP server ... does not implement OAuth" 오류를 내며, 이때 요청은 child까지 오지 않는다
 - container 격리 (2026-09-23): `docker run -i --network none --read-only -u 12345:12345`(passwd entry 없음, `HOME=/`)로 `node:26-bookworm`에서 stdio로 직접 호출했다. startup이 M27 검사를 통과했고 `read_file`, `write_file`(새 파일 생성)이 성공했으며 audit 파일이 권한 `0600`으로 기록됐다
+- release bundle (2026-09-23): `pnpm bundle`이 4개 package(`@modelcontextprotocol/server`, `@modelcontextprotocol/core`, `zod`, `ignore`)를 묶어 891 KB `index.mjs`를 만들었다. 두 번 build한 `SHA256SUMS`가 같았다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 16개와 `pnpm e2e:tunnel`(legacy·modern 양쪽)이 통과했고, repo 밖 `node_modules`가 없는 directory에서도 실행됐다. release workflow는 actionlint만 통과했고 실제 tag 실행은 아직 하지 않았다
 - 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
 ## 7. Future TODO

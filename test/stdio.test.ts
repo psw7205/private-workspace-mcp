@@ -11,7 +11,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixture, expectNoHostPath, type Fixture } from './helpers.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const serverArgs = ['--import', 'tsx', path.join(projectRoot, 'src/index.ts')];
+// TEST_SERVER_ENTRY runs this suite against a built artifact (e.g. release/index.mjs) instead of the source.
+const serverArgs = process.env.TEST_SERVER_ENTRY
+  ? [path.resolve(projectRoot, process.env.TEST_SERVER_ENTRY)]
+  : ['--import', 'tsx', path.join(projectRoot, 'src/index.ts')];
 
 type ToolText = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 
@@ -68,6 +71,12 @@ describe('stdio server', () => {
 
     afterAll(async () => {
       await session.client.close();
+    });
+
+    it('reports the package.json version', async () => {
+      // SERVER_VERSION is a hand-kept copy; releases are tagged from package.json.
+      const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };
+      expect(session.client.getServerVersion()).toMatchObject({ name: 'private-workspace-mcp', version: pkg.version });
     });
 
     it('advertises exactly the workspace tools with behavior hints', async () => {

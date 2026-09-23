@@ -22,3 +22,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm bundle
+      # The release artifact must pass the same stdio suite as the source.
+      - run: pnpm test test/stdio.test.ts
+        env:
+          TEST_SERVER_ENTRY: release/index.mjs

@@ -4,7 +4,8 @@
  *   MCP client --HTTP--> tunnel-client dev proxy (local control plane) --stdio--> dist/index.js
  *
  * Requires `tunnel-client` on PATH and a prior `pnpm build`. No OpenAI credentials are needed:
- * `dev proxy` runs the control plane in-process. Run with `pnpm e2e:tunnel`.
+ * `dev proxy` runs the control plane in-process. Run with `pnpm e2e:tunnel`. Set
+ * TEST_SERVER_ENTRY (e.g. release/index.mjs) to exercise a built artifact instead of dist/index.js.
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
@@ -16,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { Client, StreamableHTTPClientTransport, type ClientOptions } from '@modelcontextprotocol/client';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const serverEntry = path.join(projectRoot, 'dist/index.js');
+const serverEntry = path.resolve(projectRoot, process.env.TEST_SERVER_ENTRY ?? 'dist/index.js');
 
 function log(message: string): void {
   console.log(`[e2e] ${message}`);
