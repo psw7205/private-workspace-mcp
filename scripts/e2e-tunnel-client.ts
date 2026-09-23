@@ -75,7 +75,7 @@ async function exercise(mcpUrl: string, versionNegotiation: ClientOptions['versi
   log(`${label}: connected, era=${client.getProtocolEra()} version=${client.getNegotiatedProtocolVersion()}`);
 
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['get_workspace_info', 'list_directory', 'read_file', 'write_file']);
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['edit_file', 'get_workspace_info', 'list_directory', 'read_file', 'write_file']);
   log(`${label}: tools/list -> ${tools.map((tool) => tool.name).join(', ')}`);
 
   const info = text(await client.callTool({ name: 'get_workspace_info', arguments: {} }));

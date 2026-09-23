@@ -41,6 +41,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `list_directory` | `path`(기본 `.`), `depth`(기본 1), `limit`. 이름순, depth-first. symlink는 따라가지 않고 민감 파일과 특수 파일은 생략 |
 | `read_file` | UTF-8 텍스트 파일. `start_line`/`max_lines`로 line pagination. 파일 전체 기준 `revision`(`sha256:…`) 반환 |
 | `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성 |
+| `edit_file` | 기존 파일의 exact-match 문자열 교체(ADR-002). `old_string`은 한 번만 나와야 하고 여러 번이면 `replace_all`. `expected_revision` 필수, 새 `revision` 반환 |
 
 모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
 
@@ -53,6 +54,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일 |
 | `READ_ONLY` | read-only mode에서 write 시도 |
 | `REVISION_CONFLICT` | 읽은 뒤 파일이 바뀜, 이미 존재하는 파일을 revision 없이 생성 시도 |
+| `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS` | `edit_file`의 `old_string`이 없음, 여러 번 나오는데 `replace_all`이 아님 |
 | `PERMISSION_DENIED` / `TIMEOUT` / `INTERNAL_ERROR` | OS 권한, 시간 초과, 기타 (상세는 audit log에만) |
 
 ## 보안 모델

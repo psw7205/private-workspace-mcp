@@ -8,6 +8,8 @@ export type ErrorCode =
   | 'BINARY_FILE'
   | 'READ_ONLY'
   | 'REVISION_CONFLICT'
+  | 'EDIT_NO_MATCH'
+  | 'EDIT_AMBIGUOUS'
   | 'INVALID_PATH'
   | 'PERMISSION_DENIED'
   | 'TIMEOUT'

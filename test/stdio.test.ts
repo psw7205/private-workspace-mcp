@@ -70,13 +70,20 @@ describe('stdio server', () => {
       await session.client.close();
     });
 
-    it('advertises exactly the four MVP tools with behavior hints', async () => {
+    it('advertises exactly the workspace tools with behavior hints', async () => {
       const { tools } = await session.client.listTools();
       const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
-      expect(Object.keys(byName).sort()).toEqual(['get_workspace_info', 'list_directory', 'read_file', 'write_file']);
+      expect(Object.keys(byName).sort()).toEqual([
+        'edit_file',
+        'get_workspace_info',
+        'list_directory',
+        'read_file',
+        'write_file',
+      ]);
       expect(byName.read_file?.annotations?.readOnlyHint).toBe(true);
       expect(byName.list_directory?.annotations?.readOnlyHint).toBe(true);
       expect(byName.write_file?.annotations?.destructiveHint).toBe(true);
+      expect(byName.edit_file?.annotations?.destructiveHint).toBe(true);
     });
 
     it('describes the workspace without exposing the host path', async () => {
@@ -113,6 +120,16 @@ describe('stdio server', () => {
       });
       expect((stale as ToolText).isError).toBe(true);
       expect(parseText(stale).error.code).toBe('REVISION_CONFLICT');
+
+      const edited = parseText(
+        await session.client.callTool({
+          name: 'edit_file',
+          arguments: { path: 'README.md', old_string: 'v2', new_string: 'v3', expected_revision: written.revision },
+        }),
+      );
+      expect(edited).toMatchObject({ path: 'README.md', replacements: 1 });
+      const reread = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'README.md' } }));
+      expect(reread).toMatchObject({ content: '# v3\n', revision: edited.revision });
     });
 
     it('returns classified errors for escapes and denied files without host paths', async () => {
@@ -152,7 +169,7 @@ describe('stdio server', () => {
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe('2026-07-28');
       const { tools } = await session.client.listTools();
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(5);
       const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'src/index.ts' } }));
       expect(read.content).toBe('export {};\n');
     } finally {

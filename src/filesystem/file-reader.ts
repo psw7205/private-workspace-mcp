@@ -41,11 +41,7 @@ export async function readTextFile(
 ): Promise<ReadFileResult> {
   const { relativePath, absolutePath } = await guard.resolveExisting(params.path);
   const { bytes } = await readRegularFile(absolutePath, relativePath, limits.maxReadBytes);
-  if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
-    throw new WorkspaceError('BINARY_FILE', `${relativePath} looks like a binary file; only text files can be read`);
-  }
-
-  const text = decodeUtf8(bytes, relativePath);
+  const text = decodeTextFile(bytes, relativePath);
   const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const startLine = params.startLine ?? 1;
   const window = lines.slice(startLine - 1, startLine - 1 + (params.maxLines ?? DEFAULT_MAX_LINES));
@@ -66,11 +62,16 @@ export async function readTextFile(
 }
 
 /**
+ * Returns the text of a file, rejecting binary (NUL in the first 8 KiB) and non-UTF-8 content.
+ *
  * Decodes strictly: a lossy decode would replace invalid bytes with U+FFFD, and since the
  * revision covers the original bytes, writing the content back would corrupt the file.
  * ignoreBOM keeps a leading BOM in the content so a read-modify-write round trip preserves it.
  */
-function decodeUtf8(bytes: Buffer, relativePath: string): string {
+export function decodeTextFile(bytes: Buffer, relativePath: string): string {
+  if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
+    throw new WorkspaceError('BINARY_FILE', `${relativePath} looks like a binary file; only text files can be read`);
+  }
   try {
     return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
