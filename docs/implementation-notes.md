@@ -31,7 +31,9 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 | M13 | request timeout | tool handler 전체에 timeout을 걸고 `TIMEOUT`을 반환. 이미 시작된 fs 작업은 취소되지 않으므로 write timeout 메시지에 "재조회로 결과 확인"을 명시 | Node fs 작업은 취소 불가 |
 | M14 | 동시 write | 같은 canonical path에 대한 write는 process 내 lock으로 직렬화 | tunnel-client 기본 동시 요청 수가 10이므로 agent 요청끼리의 revision race를 막음 |
 | M15 | 새 파일 create-only 보장 | temp file을 쓴 뒤 `link(tmp, target)`. target이 이미 있으면 `EEXIST` → `REVISION_CONFLICT` | check와 create 사이의 race를 제거 |
-| M16 | 기존 파일 mode | overwrite 시 기존 file mode를 temp file에 복사 | rename으로 inode가 바뀌면서 실행 비트 등이 사라지는 것을 방지 |
+| M16 | 기존 파일 mode | overwrite 시 temp file을 기존 file mode로 생성하고, umask 보정을 위해 rename 전에 다시 chmod | rename으로 inode가 바뀌면서 실행 비트 등이 사라지는 것을 방지. 기본 mode로 만든 뒤 chmod하면 `0600` 파일의 새 내용이 잠시 다른 로컬 사용자에게 읽힐 수 있음 |
+| M17 | non-UTF-8 파일 | 유효한 UTF-8이 아니면 read를 `BINARY_FILE`로 거부(strict decode). 새 error code는 만들지 않음 | lossy decode는 잘못된 byte를 U+FFFD로 바꾸는데 revision은 원본 byte 기준이라, 읽은 content를 그대로 write하면 EUC-KR·latin1 파일이 조용히 손상됨. `ErrorCode`와 PRD 13 표를 바꾸지 않는 쪽을 택함 |
+| M18 | read limit을 넘는 기존 파일 overwrite | revision 계산 전에 `FILE_TOO_LARGE`로 거부. revision 계산은 `readRegularFile`을 재사용 | `read_file`이 이런 파일의 revision을 주지 않으므로 overwrite는 성공할 수 없다. 제한 없이 hash하면 임의 `expected_revision` 하나로 lock을 쥔 채 큰 IO를 일으킬 수 있음 |
 
 ### 1.3 구조 조정
 
@@ -50,10 +52,12 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 | `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | UTF-8 기준 write content 최대 크기 |
 | `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 1회 응답의 최대 entry 수 |
 | `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
-| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout |
-| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. workspace 밖이어야 하며 symlink는 거부. 권한 `0600` |
+| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도) |
+| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
 | `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
 | `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
+
+정수 설정은 모두 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다. 범위를 벗어나면 startup이 실패한다. timeout 상한이 따로 있는 이유는 `setTimeout`이 `2^31-1`보다 큰 값을 1 ms로 바꿔 모든 tool call이 `TIMEOUT`이 되기 때문이다.
 
 ## 3. 잔여 위험 (MVP에서 수용)
 
@@ -105,10 +109,10 @@ unresolved: ChatGPT UI connector의 protocol era. connector 생성에는 사용�
 
 ## 6. 검증 결과
 
-- `pnpm test`: unit과 stdio integration을 합쳐 9 files, 212 tests 통과. 커버 범위는 audit 파일 출력과 rotation, 추가 deny pattern, path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary, 크기 제한, read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
+- `pnpm test`: unit과 stdio integration을 합쳐 9 files, 227 tests 통과. 커버 범위는 audit 파일 출력과 rotation, 추가 deny pattern, path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary와 non-UTF-8, 크기 제한, read limit을 넘는 파일 overwrite 거부, 정수 설정 상한, containment 경계(sibling prefix), read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
 - `pnpm e2e:tunnel`: `tunnel-client` 0.0.14 `dev proxy --mcp-command` 경유로 tools/list, 4개 tool 호출, revision conflict, escape/deny 거부, audit이 `tunnel-client` 로그에 기록되는지 확인. `tunnel-client` SIGTERM과 SIGKILL 양쪽에서 MCP child 종료
 - hosted: `tunnel-client doctor` `RESULT ok`. `tunnel-client run`은 runtime key로 hosted control plane polling을 시작했고 `/healthz` live, `/readyz` ready. Responses API(`type: mcp`, `tunnel_id`) 호출 시 OpenAI → tunnel-service → `tunnel-client` → stdio child로 `server/discover`, `tools/list`가 전달되어 성공 응답했다(stdio tap으로 확인). model 추론은 API 계정 credit 부족(`429 credit_balance_exhausted`)으로 실패해 hosted `tools/call`은 확인하지 못했다. 종료 시 child 정리도 확인
-- Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(212), build 통과. Node 24 시절에는 root 사용자로도 확인
+- Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(227), build 통과. Node 24 시절에는 root 사용자로도 확인
 - 미검증: ChatGPT UI connector 경로(PRD 15-1)와 hosted `tools/call`. 원인은 각각 ChatGPT 로그인 필요, API credit 부족
 
 ## 7. Future TODO

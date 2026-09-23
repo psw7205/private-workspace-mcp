@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fromFsError, WorkspaceError } from '../errors/errors.js';
 import { isDenied as defaultIsDenied, type DenyMatcher } from '../policy/deny-list.js';
 
-const MAX_PATH_LENGTH = 4096;
+export const MAX_PATH_LENGTH = 4096;
 // Rejected on every platform so a path means the same thing everywhere and
 // Windows aliasing (`.env.`, `.env::$DATA`, `CON`) cannot bypass the deny list.
 const FORBIDDEN_CHARACTERS = /[\\<>:"|?*\u0000-\u001f\u007f]/;
@@ -46,6 +46,18 @@ export function normalizeRelativePath(input: string): string {
     segments.push(segment);
   }
   return segments.length === 0 ? '.' : segments.join('/');
+}
+
+/**
+ * Returns canonical `candidate` relative to canonical `root` with `/` separators (`.` for
+ * the root itself), or `undefined` when it is outside. The only containment test: it
+ * compares `path.relative` output, never string prefixes.
+ */
+export function relativeInside(root: string, candidate: string): string | undefined {
+  const relative = path.relative(root, candidate);
+  if (relative === '') return '.';
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return undefined;
+  return relative.split(path.sep).join('/');
 }
 
 export interface ResolvedPath {
@@ -154,12 +166,11 @@ export class PathGuard {
 
   /** Returns the workspace-relative form of a canonical path, or throws if it is outside. */
   assertInside(absolutePath: string, relativePath: string): string {
-    const relative = path.relative(this.root, absolutePath);
-    if (relative === '') return '.';
-    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    const inside = relativeInside(this.root, absolutePath);
+    if (inside === undefined) {
       throw new WorkspaceError('PATH_OUTSIDE_WORKSPACE', `${relativePath} resolves outside the workspace`);
     }
-    return relative.split(path.sep).join('/');
+    return inside;
   }
 
   private checkRelative(input: string): string {

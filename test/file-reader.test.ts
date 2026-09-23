@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { readTextFile } from '../src/filesystem/file-reader.js';
 import { PathGuard } from '../src/filesystem/path-guard.js';
-import { createFixture, expectWorkspaceError, type Fixture } from './helpers.js';
+import { createFixture, expectNoHostPath, expectWorkspaceError, type Fixture } from './helpers.js';
 
 const limits = { maxReadBytes: 64 };
 
@@ -26,6 +26,10 @@ describe('readTextFile', () => {
     await writeFile(path.join(fixture.root, 'data/large.txt'), 'x'.repeat(65));
     await writeFile(path.join(fixture.root, 'data/exact.txt'), 'y'.repeat(64));
     await writeFile(path.join(fixture.root, 'data/utf8.txt'), '한글\n');
+    await writeFile(path.join(fixture.root, 'data/bom.txt'), '\uFEFFbom\n');
+    await writeFile(path.join(fixture.root, 'data/latin1.txt'), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+    // "한글" in EUC-KR.
+    await writeFile(path.join(fixture.root, 'data/euc-kr.txt'), Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x0a]));
   });
 
   afterAll(async () => {
@@ -78,6 +82,19 @@ describe('readTextFile', () => {
   it('decodes UTF-8', async () => {
     const result = await readTextFile(guard, limits, { path: 'data/utf8.txt' });
     expect(result.content).toBe('한글\n');
+  });
+
+  it('keeps a leading BOM so a round trip preserves it', async () => {
+    const result = await readTextFile(guard, limits, { path: 'data/bom.txt' });
+    expect(result.content).toBe('\uFEFFbom\n');
+  });
+
+  // Lossy decoding would turn these bytes into U+FFFD, and writing the content back
+  // with the matching revision would silently corrupt the file.
+  it.each(['data/latin1.txt', 'data/euc-kr.txt'])('rejects non-UTF-8 content in %j', async (input) => {
+    const error = await expectWorkspaceError(readTextFile(guard, limits, { path: input }), 'BINARY_FILE');
+    expect(error.message).toContain(input);
+    expectNoHostPath(error.message, fixture);
   });
 
   it('allows a file exactly at the read limit', async () => {

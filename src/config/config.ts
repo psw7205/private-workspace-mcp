@@ -1,6 +1,7 @@
 import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { relativeInside } from '../filesystem/path-guard.js';
 import { DEFAULT_DENY_PATTERNS } from '../policy/deny-list.js';
 
 export type WorkspaceMode = 'read-only' | 'read-write';
@@ -31,12 +32,15 @@ export interface Config {
   denyPatterns: string[];
 }
 
-const LIMIT_ENV: Record<keyof Limits, [name: string, fallback: number]> = {
+// setTimeout clamps larger delays to 1 ms, which would time out every tool call.
+const MAX_TIMER_MS = 2_147_483_647;
+
+const LIMIT_ENV: Record<keyof Limits, [name: string, fallback: number, max?: number]> = {
   maxReadBytes: ['WORKSPACE_MAX_READ_BYTES', 1_048_576],
   maxWriteBytes: ['WORKSPACE_MAX_WRITE_BYTES', 1_048_576],
   maxDirectoryEntries: ['WORKSPACE_MAX_DIRECTORY_ENTRIES', 1000],
   maxDepth: ['WORKSPACE_MAX_DEPTH', 3],
-  requestTimeoutMs: ['WORKSPACE_REQUEST_TIMEOUT_MS', 10_000],
+  requestTimeoutMs: ['WORKSPACE_REQUEST_TIMEOUT_MS', 10_000, MAX_TIMER_MS],
 };
 
 /** Reads configuration from the environment and fails closed on any invalid value. */
@@ -56,8 +60,8 @@ export async function loadConfig(env: Record<string, string | undefined>): Promi
   }
 
   const limits = {} as Limits;
-  for (const [key, [name, fallback]] of Object.entries(LIMIT_ENV) as [keyof Limits, [string, number]][]) {
-    limits[key] = parsePositiveInteger(name, env[name], fallback);
+  for (const [key, [name, fallback, max]] of Object.entries(LIMIT_ENV) as [keyof Limits, [string, number, number?]][]) {
+    limits[key] = parsePositiveInteger(name, env[name], fallback, max);
   }
 
   const audit: AuditConfig = {
@@ -77,8 +81,7 @@ async function resolveAuditLogPath(raw: string, root: string): Promise<string> {
     throw new Error('WORKSPACE_AUDIT_LOG parent directory does not exist');
   });
   const file = path.join(parent, path.basename(raw));
-  const relative = path.relative(root, file);
-  if (relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))) {
+  if (relativeInside(root, file) !== undefined) {
     throw new Error('WORKSPACE_AUDIT_LOG must be outside WORKSPACE_ROOT');
   }
   const info = await lstat(file).catch(() => undefined);
@@ -98,8 +101,14 @@ function parseExtraDenyPatterns(raw: string | undefined): string[] {
   });
 }
 
-function parsePositiveInteger(name: string, raw: string | undefined, fallback: number): number {
+function parsePositiveInteger(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  max: number = Number.MAX_SAFE_INTEGER,
+): number {
   if (raw === undefined || raw === '') return fallback;
-  if (!/^[1-9][0-9]*$/.test(raw)) throw new Error(`${name} must be a positive integer`);
-  return Number(raw);
+  const value = Number(raw);
+  if (!/^[1-9][0-9]*$/.test(raw) || value > max) throw new Error(`${name} must be a positive integer at most ${max}`);
+  return value;
 }

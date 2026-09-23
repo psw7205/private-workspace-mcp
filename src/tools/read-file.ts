@@ -24,7 +24,7 @@ export function registerReadFile(server: McpServer, { config, guard, audit }: To
     {
       title: 'Read file',
       description:
-        `Read a UTF-8 text file from the workspace, optionally a window of lines. Files over ${maxReadBytes} bytes and binary files are rejected. ` +
+        `Read a UTF-8 text file from the workspace, optionally a window of lines. Files over ${maxReadBytes} bytes, binary files, and files that are not valid UTF-8 are rejected. ` +
         'When `truncated` is true, call again with `start_line` = `next_start_line`. ' +
         '`revision` identifies the whole file content; pass it as `expected_revision` to write_file to replace the file safely.',
       inputSchema: z.object({

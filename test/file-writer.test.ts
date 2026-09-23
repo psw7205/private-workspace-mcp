@@ -8,9 +8,9 @@ import { writeTextFile } from '../src/filesystem/file-writer.js';
 import { PathGuard } from '../src/filesystem/path-guard.js';
 import { computeRevision } from '../src/filesystem/revision.js';
 import { WorkspaceError } from '../src/errors/errors.js';
-import { createFixture, expectWorkspaceError, type Fixture } from './helpers.js';
+import { createFixture, expectNoHostPath, expectWorkspaceError, type Fixture } from './helpers.js';
 
-const readWrite = { mode: 'read-write', maxWriteBytes: 32 } as const;
+const readWrite = { mode: 'read-write', maxReadBytes: 64, maxWriteBytes: 32 } as const;
 
 describe('writeTextFile', () => {
   let fixture: Fixture;
@@ -28,7 +28,7 @@ describe('writeTextFile', () => {
   const inRoot = (relative: string) => path.join(fixture.root, relative);
 
   it('refuses every write in read-only mode', async () => {
-    const readOnly = { mode: 'read-only', maxWriteBytes: 32 } as const;
+    const readOnly = { mode: 'read-only', maxReadBytes: 64, maxWriteBytes: 32 } as const;
     await expectWorkspaceError(writeTextFile(guard, readOnly, { path: 'new.txt', content: 'x' }), 'READ_ONLY');
     const revision = computeRevision(await readFile(inRoot('README.md')));
     await expectWorkspaceError(
@@ -154,15 +154,34 @@ describe('writeTextFile', () => {
     },
   );
 
+  // read_file never returns a revision for such a file, so hashing it could only burn IO.
+  it('refuses to replace a file over the read limit, even with its revision', async () => {
+    const original = 'x'.repeat(65);
+    await writeFile(inRoot('large.txt'), original);
+    const error = await expectWorkspaceError(
+      writeTextFile(guard, readWrite, {
+        path: 'large.txt',
+        content: 'small',
+        expectedRevision: computeRevision(Buffer.from(original)),
+      }),
+      'FILE_TOO_LARGE',
+    );
+    expectNoHostPath(error.message, fixture);
+    expect(await readFile(inRoot('large.txt'), 'utf8')).toBe(original);
+  });
+
   it('rejects a directory target', async () => {
     await expectWorkspaceError(writeTextFile(guard, readWrite, { path: 'src', content: 'x' }), 'NOT_A_FILE');
   });
 
-  it.skipIf(process.platform === 'win32')('preserves the mode of an overwritten file', async () => {
-    await chmod(inRoot('README.md'), 0o755);
+  it.skipIf(process.platform === 'win32').each([
+    ['0755', 0o755],
+    ['0600', 0o600],
+  ])('preserves mode %s of an overwritten file', async (_label, mode) => {
+    await chmod(inRoot('README.md'), mode);
     const revision = computeRevision(await readFile(inRoot('README.md')));
     await writeTextFile(guard, readWrite, { path: 'README.md', content: '#!/bin/sh\n', expectedRevision: revision });
-    expect((await stat(inRoot('README.md'))).mode & 0o777).toBe(0o755);
+    expect((await stat(inRoot('README.md'))).mode & 0o777).toBe(mode);
   });
 
   it('leaves no temporary files behind on success or conflict', async () => {

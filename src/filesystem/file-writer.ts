@@ -1,14 +1,14 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { chmod, link, mkdir, open, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Limits, WorkspaceMode } from '../config/config.js';
 import { fromFsError, WorkspaceError } from '../errors/errors.js';
-import { READ_FLAGS } from './file-reader.js';
+import { readRegularFile } from './file-reader.js';
 import type { PathGuard } from './path-guard.js';
 import { computeRevision } from './revision.js';
 
-export interface WriteFileOptions extends Pick<Limits, 'maxWriteBytes'> {
+export interface WriteFileOptions extends Pick<Limits, 'maxReadBytes' | 'maxWriteBytes'> {
   mode: WorkspaceMode;
 }
 
@@ -77,8 +77,9 @@ export async function writeTextFile(
           `${relativePath} already exists; read it and pass its revision as expected_revision to replace it`,
         );
       }
-      const current = await inspectExistingFile(absolutePath, relativePath);
-      if (current.revision !== params.expectedRevision) {
+      // Bounded by the read limit: read_file never returns a revision for a larger file.
+      const current = await readRegularFile(absolutePath, relativePath, options.maxReadBytes);
+      if (computeRevision(current.bytes) !== params.expectedRevision) {
         throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} changed since it was read; read it again and retry`);
       }
       existingMode = current.mode;
@@ -97,7 +98,8 @@ export async function writeTextFile(
 
     const tempPath = path.join(parent, `.pwmcp-${randomBytes(8).toString('hex')}.tmp`);
     try {
-      const handle = await open(tempPath, 'wx');
+      // Create with the final mode so a private file's new content is never briefly more readable.
+      const handle = await open(tempPath, 'wx', existingMode ?? 0o666);
       try {
         await handle.writeFile(bytes);
         await handle.sync();
@@ -112,7 +114,8 @@ export async function writeTextFile(
           }
           throw error;
         });
-        await unlink(tempPath);
+        // The file is published; failing to drop the extra temp link must not fail the write.
+        await unlink(tempPath).catch(() => undefined);
       } else {
         await chmod(tempPath, existingMode);
         await rename(tempPath, absolutePath);
@@ -130,25 +133,6 @@ export async function writeTextFile(
       revision: computeRevision(bytes),
     };
   });
-}
-
-async function inspectExistingFile(absolutePath: string, relativePath: string): Promise<{ revision: string; mode: number }> {
-  const handle = await open(absolutePath, READ_FLAGS).catch((error: unknown) => {
-    throw fromFsError(error, relativePath);
-  });
-  try {
-    const info = await handle.stat();
-    if (!info.isFile()) {
-      throw new WorkspaceError('NOT_A_FILE', `${relativePath} is not a regular file`);
-    }
-    const hash = createHash('sha256');
-    for await (const chunk of handle.createReadStream({ autoClose: false })) {
-      hash.update(chunk as Buffer);
-    }
-    return { revision: `sha256:${hash.digest('hex')}`, mode: info.mode & 0o7777 };
-  } finally {
-    await handle.close();
-  }
 }
 
 async function createMissingDirectories(ancestor: string, names: string[], relativePath: string): Promise<void> {

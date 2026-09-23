@@ -3,9 +3,29 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { ErrorCode } from '../src/errors/errors.js';
-import { normalizeRelativePath, PathGuard } from '../src/filesystem/path-guard.js';
+import { normalizeRelativePath, PathGuard, relativeInside } from '../src/filesystem/path-guard.js';
 import { createDenyMatcher, DEFAULT_DENY_PATTERNS } from '../src/policy/deny-list.js';
 import { createFixture, expectNoHostPath, expectWorkspaceError, type Fixture } from './helpers.js';
+
+describe('relativeInside', () => {
+  const root = path.resolve('workspace');
+
+  it.each([
+    ['the root itself', root, '.'],
+    ['a nested path', path.join(root, 'src', 'a.ts'), 'src/a.ts'],
+    ['a name that starts with ".."', path.join(root, '..foo'), '..foo'],
+  ])('returns the relative form of %s', (_label, candidate, expected) => {
+    expect(relativeInside(root, candidate)).toBe(expected);
+  });
+
+  it.each([
+    ['the parent', path.dirname(root)],
+    ['a sibling sharing the root as a string prefix', `${root}-other`],
+    ['a path under a sibling', path.join(`${root}-other`, 'a.ts')],
+  ])('rejects %s', (_label, candidate) => {
+    expect(relativeInside(root, candidate)).toBeUndefined();
+  });
+});
 
 describe('normalizeRelativePath', () => {
   it.each([

@@ -10,7 +10,7 @@ export const DEFAULT_MAX_LINES = 2000;
 const BINARY_SNIFF_BYTES = 8192;
 // O_NOFOLLOW: refuse a final component swapped to a symlink after validation.
 // O_NONBLOCK: opening a FIFO must not block before the regular-file check.
-export const READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+const READ_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 export interface ReadFileParams {
   path: string;
@@ -40,13 +40,12 @@ export async function readTextFile(
   params: ReadFileParams,
 ): Promise<ReadFileResult> {
   const { relativePath, absolutePath } = await guard.resolveExisting(params.path);
-  const bytes = await readRegularFile(absolutePath, relativePath, limits.maxReadBytes);
+  const { bytes } = await readRegularFile(absolutePath, relativePath, limits.maxReadBytes);
   if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
     throw new WorkspaceError('BINARY_FILE', `${relativePath} looks like a binary file; only text files can be read`);
   }
 
-  // ignoreBOM keeps a leading BOM in the content so a read-modify-write round trip preserves it.
-  const text = new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes);
+  const text = decodeUtf8(bytes, relativePath);
   const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const startLine = params.startLine ?? 1;
   const window = lines.slice(startLine - 1, startLine - 1 + (params.maxLines ?? DEFAULT_MAX_LINES));
@@ -66,8 +65,28 @@ export async function readTextFile(
   };
 }
 
-/** Reads a whole regular file, refusing anything larger than `maxBytes` even if it grows mid-read. */
-export async function readRegularFile(absolutePath: string, relativePath: string, maxBytes: number): Promise<Buffer> {
+/**
+ * Decodes strictly: a lossy decode would replace invalid bytes with U+FFFD, and since the
+ * revision covers the original bytes, writing the content back would corrupt the file.
+ * ignoreBOM keeps a leading BOM in the content so a read-modify-write round trip preserves it.
+ */
+function decodeUtf8(bytes: Buffer, relativePath: string): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new WorkspaceError('BINARY_FILE', `${relativePath} is not valid UTF-8 text; only UTF-8 text files can be read`);
+  }
+}
+
+/**
+ * Reads a whole regular file, refusing anything larger than `maxBytes` even if it grows
+ * mid-read. `mode` holds the permission bits of the file that was read.
+ */
+export async function readRegularFile(
+  absolutePath: string,
+  relativePath: string,
+  maxBytes: number,
+): Promise<{ bytes: Buffer; mode: number }> {
   const handle = await open(absolutePath, READ_FLAGS).catch((error: unknown) => {
     throw fromFsError(error, relativePath);
   });
@@ -92,7 +111,7 @@ export async function readRegularFile(absolutePath: string, relativePath: string
       }
       chunks.push(Buffer.from(chunk.subarray(0, bytesRead)));
     }
-    return Buffer.concat(chunks, total);
+    return { bytes: Buffer.concat(chunks, total), mode: info.mode & 0o7777 };
   } finally {
     await handle.close();
   }

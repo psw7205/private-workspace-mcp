@@ -40,7 +40,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `get_workspace_info` | workspace 이름, mode, platform, limits. host 절대 경로는 반환하지 않음 |
 | `list_directory` | `path`(기본 `.`), `depth`(기본 1), `limit`. 이름순, depth-first. symlink는 따라가지 않고 민감 파일과 특수 파일은 생략 |
 | `read_file` | UTF-8 텍스트 파일. `start_line`/`max_lines`로 line pagination. 파일 전체 기준 `revision`(`sha256:…`) 반환 |
-| `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. 없는 parent directory는 생성 |
+| `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성 |
 
 모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
 
@@ -50,7 +50,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `PATH_BLOCKED` | 민감 파일 deny pattern에 걸림 |
 | `INVALID_PATH` | 경로 문법 오류, symlink 대상에 쓰기, 깨진 symlink 아래에 쓰기 |
 | `FILE_NOT_FOUND` / `NOT_A_FILE` / `NOT_A_DIRECTORY` | 대상 상태 불일치 |
-| `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 파일 |
+| `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일 |
 | `READ_ONLY` | read-only mode에서 write 시도 |
 | `REVISION_CONFLICT` | 읽은 뒤 파일이 바뀜, 이미 존재하는 파일을 revision 없이 생성 시도 |
 | `PERMISSION_DENIED` / `TIMEOUT` / `INTERNAL_ERROR` | OS 권한, 시간 초과, 기타 (상세는 audit log에만) |
@@ -76,12 +76,12 @@ path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자�
 | `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | write content 최대 크기 (UTF-8 bytes) |
 | `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 응답 최대 entry 수 |
 | `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
-| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout |
-| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. workspace 밖이어야 하며 symlink는 거부. 권한 `0600` |
+| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도) |
+| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
 | `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
 | `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
 
-값이 잘못되면 stderr에 이유를 출력하고 exit code 1로 종료한다(fail closed). stdout은 MCP protocol 전용이다. startup 메시지는 stderr로, audit log는 `WORKSPACE_AUDIT_LOG`가 있으면 그 파일로, 없으면 stderr로 나간다.
+정수 설정은 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다. 값이 잘못되면 stderr에 이유를 출력하고 exit code 1로 종료한다(fail closed). stdout은 MCP protocol 전용이다. startup 메시지는 stderr로, audit log는 `WORKSPACE_AUDIT_LOG`가 있으면 그 파일로, 없으면 stderr로 나간다.
 
 ## OpenAI Secure MCP Tunnel 연결
 

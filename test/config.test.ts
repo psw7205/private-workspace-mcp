@@ -77,6 +77,11 @@ describe('loadConfig', () => {
     });
   });
 
+  it('accepts the largest timeout a timer can hold', async () => {
+    const config = await loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_REQUEST_TIMEOUT_MS: '2147483647' });
+    expect(config.limits.requestTimeoutMs).toBe(2_147_483_647);
+  });
+
   it.each([
     ['missing root', {}],
     ['relative root', { WORKSPACE_ROOT: 'relative/path' }],
@@ -85,6 +90,10 @@ describe('loadConfig', () => {
     ['non-numeric limit', { WORKSPACE_MAX_READ_BYTES: 'lots' }],
     ['zero limit', { WORKSPACE_MAX_DEPTH: '0' }],
     ['fractional limit', { WORKSPACE_MAX_DIRECTORY_ENTRIES: '1.5' }],
+    // setTimeout clamps larger delays to 1 ms, which would time out every call.
+    ['timeout beyond the timer range', { WORKSPACE_REQUEST_TIMEOUT_MS: '2147483648' }],
+    ['limit beyond the safe integer range', { WORKSPACE_MAX_READ_BYTES: '9007199254740992' }],
+    ['audit size beyond the safe integer range', { WORKSPACE_AUDIT_LOG_MAX_BYTES: '9'.repeat(400) }],
   ])('fails closed on %s', async (_label, env: Record<string, string>) => {
     const withRoot = 'WORKSPACE_ROOT' in env || _label === 'missing root' ? env : { WORKSPACE_ROOT: workspace, ...env };
     await expect(loadConfig(withRoot)).rejects.toThrow();

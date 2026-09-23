@@ -13,7 +13,7 @@ const outputSchema = z.object({
 });
 
 export function registerWriteFile(server: McpServer, { config, guard, audit }: ToolDeps): void {
-  const { maxWriteBytes, requestTimeoutMs } = config.limits;
+  const { maxReadBytes, maxWriteBytes, requestTimeoutMs } = config.limits;
   server.registerTool(
     'write_file',
     {
@@ -22,7 +22,8 @@ export function registerWriteFile(server: McpServer, { config, guard, audit }: T
         'Create a UTF-8 text file or replace an existing one with the full new content. ' +
         'To replace an existing file, first read_file it and pass its `revision` as `expected_revision`; the write fails with REVISION_CONFLICT if the file changed since. ' +
         'To create a new file, omit `expected_revision`; missing parent directories are created. ' +
-        `Content is limited to ${maxWriteBytes} bytes. Fails with READ_ONLY unless the operator enabled read-write mode.`,
+        `Content is limited to ${maxWriteBytes} bytes, and files over ${maxReadBytes} bytes cannot be replaced. ` +
+        'Fails with READ_ONLY unless the operator enabled read-write mode.',
       inputSchema: z.object({
         path: pathSchema,
         content: z.string().describe('Complete new file content'),
@@ -38,7 +39,7 @@ export function registerWriteFile(server: McpServer, { config, guard, audit }: T
       runTool({ tool: 'write_file', path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
         const result = await writeTextFile(
           guard,
-          { mode: config.mode, maxWriteBytes },
+          { mode: config.mode, maxReadBytes, maxWriteBytes },
           { path, content, expectedRevision: expected_revision },
         );
         return { result: { ...result }, bytesWritten: result.bytes_written };
