@@ -1,27 +1,14 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
+    "target": "ES2025",
+    "lib": ["ES2025"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": [
-      "ES2023"
-    ],
-    "types": [
-      "node"
-    ],
-    "strict": true,
+    "types": ["node"],
     "noUncheckedIndexedAccess": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "outDir": "dist",
-    "rootDir": "."
+    "skipLibCheck": true
   },
-  "include": [
-    "src",
-    "test",
-    "scripts",
-    "vitest.config.ts"
-  ]
+  "include": ["src", "test", "scripts", "vitest.config.ts"]
 }

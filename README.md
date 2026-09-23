@@ -18,7 +18,7 @@ OpenAI Secure MCP Tunnel 뒤에서 `tunnel-client`의 child process로 실행되
 
 ## 개발
 
-toolchain은 `mise.toml`(Node 24 LTS, pnpm)로 관리한다.
+toolchain은 `mise.toml`(Node 26, pnpm)로 관리하고 compiler는 TypeScript 7을 쓴다.
 
 ```sh
 mise install

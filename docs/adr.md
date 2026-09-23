@@ -144,6 +144,8 @@ MCP TypeScript SDK v2
 Zod v4
 ```
 
+> **Amendment (2026-09-23):** runtime을 Node.js 26(현재 stable 26.10.0), compiler를 TypeScript 7로 올린다. Node 26은 2026-10에 LTS로 전환될 예정이고, 그 전까지는 Current release line이다. 버전은 `mise.toml`에서 pin한다.
+
 특정 HTTP framework는 도입하지 않는다.
 
 stdio process이므로:

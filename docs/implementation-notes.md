@@ -36,6 +36,7 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
+- TypeScript 7 기본값(`strict` true, `rootDir` `./`, `types` `[]`)에 맞춰 tsconfig에서 중복 옵션을 제거했다. `types: ["node"]`는 TS 7에서 기본값이 `[]`가 되어 명시가 필수다. `target`/`lib`는 7.x minor에서 기본값이 바뀌어도 build 출력이 흔들리지 않도록 `ES2025`로 명시한다.
 - ADR 7에 없는 `filesystem/directory-lister.ts`와 `tools/run-tool.ts`(timeout, error 변환, audit을 담당하는 공통 wrapper)를 추가한다.
 
 ## 2. 설정
@@ -107,7 +108,7 @@ unresolved: ChatGPT UI connector의 protocol era. connector 생성에는 사용�
 - `pnpm test`: unit과 stdio integration을 합쳐 9 files, 212 tests 통과. 커버 범위는 audit 파일 출력과 rotation, 추가 deny pattern, path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary, 크기 제한, read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
 - `pnpm e2e:tunnel`: `tunnel-client` 0.0.14 `dev proxy --mcp-command` 경유로 tools/list, 4개 tool 호출, revision conflict, escape/deny 거부, audit이 `tunnel-client` 로그에 기록되는지 확인. `tunnel-client` SIGTERM과 SIGKILL 양쪽에서 MCP child 종료
 - hosted: `tunnel-client doctor` `RESULT ok`. `tunnel-client run`은 runtime key로 hosted control plane polling을 시작했고 `/healthz` live, `/readyz` ready. Responses API(`type: mcp`, `tunnel_id`) 호출 시 OpenAI → tunnel-service → `tunnel-client` → stdio child로 `server/discover`, `tools/list`가 전달되어 성공 응답했다(stdio tap으로 확인). model 추론은 API 계정 credit 부족(`429 credit_balance_exhausted`)으로 실패해 hosted `tools/call`은 확인하지 못했다. 종료 시 child 정리도 확인
-- Linux: Docker `node:24-bookworm`(aarch64, Node 24.21)에서 clean install 후 typecheck, test(212), build 통과. root와 non-root(`node`) 사용자 모두 확인
+- Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(212), build 통과. Node 24 시절에는 root 사용자로도 확인
 - 미검증: ChatGPT UI connector 경로(PRD 15-1)와 hosted `tools/call`. 원인은 각각 ChatGPT 로그인 필요, API credit 부족
 
 ## 7. Future TODO
