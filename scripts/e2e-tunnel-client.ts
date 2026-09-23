@@ -107,7 +107,7 @@ async function exercise(mcpUrl: string, versionNegotiation: ClientOptions['versi
 
   for (const [target, code] of [
     ['../outside.txt', 'PATH_OUTSIDE_WORKSPACE'],
-    ['escape/secret.txt', 'PATH_OUTSIDE_WORKSPACE'],
+    ['escape/private.txt', 'PATH_OUTSIDE_WORKSPACE'],
     ['.env', 'PATH_BLOCKED'],
   ] as const) {
     const result = await client.callTool({ name: 'read_file', arguments: { path: target } });
@@ -132,7 +132,7 @@ async function main(): Promise<void> {
   await mkdir(outside);
   await writeFile(path.join(workspace, 'README.md'), '# e2e\n');
   await writeFile(path.join(workspace, '.env'), 'SECRET=1\n');
-  await writeFile(path.join(outside, 'secret.txt'), 'outside\n');
+  await writeFile(path.join(outside, 'private.txt'), 'outside\n');
   execFileSync('ln', ['-s', outside, path.join(workspace, 'escape')]);
 
   const proxies: ChildProcess[] = [];
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
     await exercise(modern.mcpUrl, { mode: { pin: '2026-07-28' } }, 'modern');
     await stopAndCheckChild(modern.proxy, modern.childPid, 'SIGKILL');
 
-    assert.deepEqual(execFileSync('ls', [outside], { encoding: 'utf8' }).trim().split('\n'), ['secret.txt']);
+    assert.deepEqual(execFileSync('ls', [outside], { encoding: 'utf8' }).trim().split('\n'), ['private.txt']);
     log('PASS');
   } finally {
     for (const proxy of proxies) proxy.kill('SIGKILL');

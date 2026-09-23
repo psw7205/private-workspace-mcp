@@ -1,4 +1,5 @@
 import { lstat, realpath, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { relativeInside } from '../filesystem/path-guard.js';
@@ -56,6 +57,7 @@ export async function loadConfig(env: Record<string, string | undefined>): Promi
     throw new Error('WORKSPACE_ROOT does not exist or is not accessible');
   });
   if (!(await stat(root)).isDirectory()) throw new Error('WORKSPACE_ROOT must be a directory');
+  await assertNarrowRoot(root);
 
   const mode = env.WORKSPACE_MODE ?? 'read-only';
   if (mode !== 'read-only' && mode !== 'read-write') {
@@ -75,6 +77,23 @@ export async function loadConfig(env: Record<string, string | undefined>): Promi
   const denyPatterns = [...DEFAULT_DENY_PATTERNS, ...parseExtraDenyPatterns(env.WORKSPACE_EXTRA_DENY_PATTERNS)];
 
   return { root, name: env.WORKSPACE_NAME || path.basename(root), mode, limits, audit, denyPatterns };
+}
+
+/**
+ * The root is the sandbox boundary, so refuse roots that expose the whole disk or the
+ * home directory (`~/.ssh`, `~/.aws`, ...) instead of relying on the deny list.
+ */
+async function assertNarrowRoot(root: string): Promise<void> {
+  const message = 'WORKSPACE_ROOT must not be the filesystem root, the home directory, or a parent of it';
+  if (path.parse(root).root === root) throw new Error(message);
+  let home: string;
+  try {
+    // Throws when HOME is unset and the uid has no passwd entry, e.g. `docker run -u <uid>`.
+    home = await realpath(os.homedir());
+  } catch {
+    return;
+  }
+  if (relativeInside(root, home) !== undefined) throw new Error(message);
 }
 
 /** The audit log must live outside the workspace so tools can neither read nor rewrite it. */

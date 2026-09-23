@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '../src/config/config.js';
 import { DEFAULT_DENY_PATTERNS } from '../src/policy/deny-list.js';
@@ -122,6 +122,29 @@ describe('loadConfig', () => {
     ])('rejects %s', async (_label, audit) => {
       await symlink(path.join(base, 'file.txt'), path.join(base, 'audit-link.jsonl')).catch(() => undefined);
       await expect(loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_AUDIT_LOG: audit() })).rejects.toThrow();
+    });
+  });
+
+  describe('broad roots', () => {
+    it.each([
+      ['the filesystem root', () => path.parse(process.cwd()).root],
+      ['the home directory', () => os.homedir()],
+      ['a parent of the home directory', () => path.dirname(os.homedir())],
+    ])('rejects %s', async (_label, root) => {
+      await expect(loadConfig({ WORKSPACE_ROOT: root() })).rejects.toThrow(/WORKSPACE_ROOT/);
+    });
+
+    it('still rejects the filesystem root when the home directory is unknown', async () => {
+      // os.homedir() throws on Linux when HOME is unset and the uid has no passwd entry.
+      const spy = vi.spyOn(os, 'homedir').mockImplementation(() => {
+        throw new Error('ENOENT: uv_os_homedir');
+      });
+      try {
+        await expect(loadConfig({ WORKSPACE_ROOT: path.parse(process.cwd()).root })).rejects.toThrow(/WORKSPACE_ROOT/);
+        await expect(loadConfig({ WORKSPACE_ROOT: workspace })).resolves.toMatchObject({ root: await realpath(workspace) });
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

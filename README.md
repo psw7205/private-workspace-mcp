@@ -61,13 +61,18 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 
 ## 보안 모델
 
-- **workspace 고정**: root는 서버 설정(`WORKSPACE_ROOT`)으로만 정하고 startup 시 realpath로 고정한다. MCP Roots는 쓰지 않는다.
+- **workspace 고정**: root는 서버 설정(`WORKSPACE_ROOT`)으로만 정하고 startup 시 realpath로 고정한다. MCP Roots는 쓰지 않는다. root가 사실상 sandbox 경계이므로 filesystem root, home directory, home의 상위 directory는 startup에서 거부한다. agent 전용 directory를 root로 쓴다.
 - **단일 `PathGuard`**: 입력 문법 검사(`..`, 절대/drive/UNC 경로, Windows alias 거부) 후 realpath로 canonical 경로를 구해 containment를 판정한다. 문자열 prefix 비교는 쓰지 않는다.
-- **민감 파일 deny**: `.env`, `.env.*`, `*.pem`, `*.key`, `.ssh`, `.aws`, `.gnupg`, `.npmrc`, `.netrc`, `credentials*`, `secrets*`, `.git`. 입력 경로와 canonical 경로 양쪽에 case-insensitive로 적용한다. 운영자는 추가만 할 수 있다.
+- **민감 파일 deny**: `.env`, `.env.*`, `*.pem`, `*.key`, `.ssh`, `.aws`, `.gnupg`, `.npmrc`, `.netrc`, `credentials*`, `secret*`, `.git`, `.git-credentials`, `service-account*.json`, `id_rsa*`, `id_ed25519*`, `*.tfstate`, `*.tfstate.*`, `.kube`, `kubeconfig*`, `.docker`, `.pypirc`, `*.p12`, `*.pfx`. 입력 경로와 canonical 경로 양쪽에 case-insensitive로 적용한다. 운영자는 추가만 할 수 있다.
 - **안전한 write**: 기본 read-only. 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
 - **audit**: tool call마다 JSON Lines 1건(요청 id, tool, path, 성공 여부, 소요 시간, bytes, error code). 파일 내용과 secret은 기록하지 않는다.
 
 path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자나 container 같은 OS 권한이다(ADR-001 §11). 잔여 위험은 implementation notes 3절에 있다.
+
+read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(prompt injection)가 `write_file`·`edit_file` 호출로 이어질 수 있다. revision 검사는 lost update를 막을 뿐 이 경로를 막지 않는다(model도 `read_file`로 revision을 얻는다). 서버는 두 tool에 `readOnlyHint: false`, `destructiveHint: true`를 선언한다. client 쪽 approval은 서버 권한 판단의 근거가 아닌 보조 방어로 쓴다(ADR-001 §14).
+
+- Responses API: `require_approval: {"never": {"tool_names": ["get_workspace_info", "list_directory", "read_file", "find_files", "search_text"]}}`로 읽기 tool만 자동 실행하고 나머지는 승인을 받는다. 쓰기가 필요 없으면 `allowed_tools`로 읽기 tool만 노출하거나 서버를 read-only로 띄운다.
+- ChatGPT: write tool 호출 확인을 끄지 않는다.
 
 ## 설정 (env)
 
@@ -105,12 +110,23 @@ tunnel-client doctor --profile workspace-mcp --explain
 tunnel-client run --profile workspace-mcp
 ```
 
+OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. container에는 workspace와 audit log directory만 mount되므로 PathGuard에 결함이 있어도 host의 다른 파일에 닿지 않는다. `-i`는 필수이고 `-t`는 쓰지 않는다(stdout이 MCP channel).
+
+```sh
+--mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY docker run -i --rm --network none --read-only -u 12345:12345 \
+  -v <repo>:/app:ro -v <project>:/workspace -v <audit-dir>:/logs \
+  -e WORKSPACE_ROOT=/workspace -e WORKSPACE_MODE=read-write -e WORKSPACE_AUDIT_LOG=/logs/audit.jsonl \
+  node:26-bookworm node /app/dist/index.js"
+```
+
+`<repo>`는 `pnpm install`과 `pnpm build`를 마친 이 repo다. Linux host에서는 `-u`로 준 uid가 `<project>`의 파일을 읽고 쓸 수 있어야 하고, 새 파일은 그 uid 소유로 생긴다(Docker Desktop for Mac은 host 사용자로 매핑한다). `docker run` 단독 stdio 호출은 확인했지만 `tunnel-client` 경유는 아직 확인하지 않았다(implementation notes 6절).
+
 `run`이 healthy인 동안 ChatGPT에서 connector를 만든다.
 
 1. Settings > Security and login에서 Developer mode를 켠다.
 2. https://chatgpt.com/plugins 에서 새 connector를 추가하고 Connection으로 Tunnel을 골라 tunnel을 선택한다(또는 `tunnel_id` 입력).
 3. 인증은 **인증 없음(No authentication)**을 고른다. 이 서버는 OAuth를 구현하지 않으므로 OAuth를 고르면 "does not implement OAuth" 오류가 난다. 접근 통제는 OpenAI의 tunnel 권한이 맡는다(ADR 17 Amendment).
-4. tool 4개가 발견되는지 확인한다.
+4. tool 7개가 발견되는지 확인한다.
 
 Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
 

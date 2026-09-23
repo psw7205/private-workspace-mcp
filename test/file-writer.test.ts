@@ -128,7 +128,7 @@ describe('writeTextFile', () => {
       writeTextFile(guard, readWrite, { path: 'link-outside-file', content: 'pwned' }),
       'INVALID_PATH',
     );
-    expect(await readFile(path.join(fixture.outside, 'secret.txt'), 'utf8')).toBe('outside secret\n');
+    expect(await readFile(path.join(fixture.outside, 'private.txt'), 'utf8')).toBe('outside secret\n');
   });
 
   it('does not create files through a symlinked directory that points outside', async () => {
@@ -136,7 +136,7 @@ describe('writeTextFile', () => {
       writeTextFile(guard, readWrite, { path: 'link-outside-dir/new.txt', content: 'pwned' }),
       'PATH_OUTSIDE_WORKSPACE',
     );
-    expect(await readdir(fixture.outside)).toEqual(['secret.txt']);
+    expect(await readdir(fixture.outside)).toEqual(['private.txt']);
   });
 
   it('does not create directories through a dangling symlink', async () => {
@@ -144,7 +144,7 @@ describe('writeTextFile', () => {
       writeTextFile(guard, readWrite, { path: 'link-dangling/new.txt', content: 'pwned' }),
       'INVALID_PATH',
     );
-    expect(await readdir(fixture.outside)).toEqual(['secret.txt']);
+    expect(await readdir(fixture.outside)).toEqual(['private.txt']);
   });
 
   it.each(['.env', 'config/.env.local', '.git/hooks/pre-commit', 'certs/tls.key'])(

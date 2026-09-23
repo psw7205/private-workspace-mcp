@@ -18,7 +18,7 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 |---|------|------|------|
 | M1 | revision 범위 | 항상 **파일 전체 bytes**의 SHA-256 (`sha256:<hex>`). line window만 읽어도 동일 | window 단위 revision이면 paginated read 후 write가 불가능 |
 | M2 | deny pattern 매칭 의미 | 모든 path segment에 basename glob(`*`만 지원)을 **case-insensitive**로 적용. 입력 경로와 canonical(realpath) 경로 둘 다 검사 | macOS/Windows case-insensitive FS에서 `.ENV` 우회, workspace 내부 symlink(`foo -> .env`) 우회 방지 |
-| M3 | deny 목록 | PRD 9 예시 + `.git`. 운영자는 `WORKSPACE_EXTRA_DENY_PATTERNS`로 추가만 할 수 있고 기본 목록은 제거할 수 없음 | `.git/hooks` 쓰기는 사용자의 다음 git 명령에서 코드 실행으로 이어지고, `.git/config`에는 credential이 들어 있을 수 있음. Git은 Phase 4 typed tool로 다룬다 |
+| M3 | deny 목록 | PRD 9 예시 + `.git` (이후 M26으로 확장). 운영자는 `WORKSPACE_EXTRA_DENY_PATTERNS`로 추가만 할 수 있고 기본 목록은 제거할 수 없음 | `.git/hooks` 쓰기는 사용자의 다음 git 명령에서 코드 실행으로 이어지고, `.git/config`에는 credential이 들어 있을 수 있음. Git은 Phase 4 typed tool로 다룬다 |
 | M4 | listing에서 deny 항목 | 결과에서 생략 | 민감 파일 존재 여부도 노출하지 않음 |
 | M5 | binary 판정 | 앞 8 KiB에 NUL byte가 있으면 `BINARY_FILE` | 단순하고 흔한 heuristic |
 | M6 | 새 파일의 parent directory | 없는 parent는 생성. 가장 가까운 기존 ancestor를 canonicalize해 containment를 확인한 뒤, 누락된 segment만 하나씩 `mkdir`하고 다시 realpath로 재확인 | PRD 6.4(`docs/architecture.md` 생성)와 PRD 8.3("가장 가까운 기존 parent를 canonicalize")이 누락 parent를 전제함. MVP에는 별도 mkdir tool이 없음 |
@@ -47,6 +47,15 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 | M24 | timeout 후 작업 중단 | `runTool`이 timeout 때 `AbortSignal`을 abort하고 검색 순회는 파일마다 signal을 확인해 멈춤 | 이전에는 timeout 응답 뒤에도 순회가 끝까지 돌았음 |
 | M25 | well-formed가 아닌 content | `write_file`·`edit_file` 결과에 lone surrogate가 있으면 `BINARY_FILE`로 거부 | `Buffer.from`이 lone surrogate를 U+FFFD로 바꿔, 보낸 것과 다른 내용이 저장됨. `edit_file`에서 `old_string`이 surrogate pair의 절반이면 파일이 손상됨 |
 
+### 1.2.2 보안 피드백 후속 결정 (2026-09-23)
+
+ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 수 있는 항목이다.
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M26 | deny 목록 확장 | `secrets*`를 `secret*`로 넓히고 `.git-credentials`, `service-account*.json`, `id_rsa*`, `id_ed25519*`, `*.tfstate`, `*.tfstate.*`, `.kube`, `kubeconfig*`, `.docker`, `.pypirc`, `*.p12`, `*.pfx`를 추가. PRD 9 원문 목록은 고치지 않음 | `secrets*`는 `secret.yaml`을 놓쳤고, 나머지는 `.ssh`·`.aws` 밖에 흔히 놓이는 credential. `secretary.md` 같은 오탐은 read 거부로 끝나지만 누락은 되돌릴 수 없음. deny는 여전히 보조 방어(PRD 9) |
+| M27 | 넓은 root 거부 | canonical root가 filesystem root이거나 canonical home을 포함하면(home 자신과 그 상위) startup 실패. home을 알 수 없으면(`HOME` 미설정 + passwd entry 없는 uid) home 검사만 건너뜀 | root가 사실상 sandbox 경계. `$HOME`이면 deny에 없는 home 아래 모든 파일이 노출됨. 전용 uid로 container를 띄우는 구성(README)이 막히지 않게 home 조회 실패는 허용 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -57,7 +66,7 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 
 | env | 기본값 | 설명 |
 |-----|--------|------|
-| `WORKSPACE_ROOT` | (필수) | 절대 경로. 존재하는 directory여야 하며 startup 시 realpath로 고정 |
+| `WORKSPACE_ROOT` | (필수) | 절대 경로. 존재하는 directory여야 하며 startup 시 realpath로 고정. filesystem root, home, home의 상위는 거부(M27) |
 | `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write` |
 | `WORKSPACE_NAME` | root basename | `get_workspace_info`에 노출되는 이름 |
 | `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이 크기를 넘는 파일은 read 거부 |
@@ -78,6 +87,7 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 - **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
 - **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
 - **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 첫 push부터 test suite를 실행한다.
+- **prompt injection을 통한 write**: read-write 모드에서 model이 읽은 파일에 심어진 지시가 `write_file`·`edit_file` 호출로 이어질 수 있다. revision은 model도 `read_file`로 얻으므로 방어가 아니다. 서버는 read-only 기본값과 `destructiveHint`만 제공하고, 승인은 client 설정(README)에 맡긴다. 피해 복구 수단(revision history, rollback)은 PRD Phase 2 범위다.
 - **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
 
 ## 4. 알려진 제약: stdio connection의 protocol era pin
@@ -126,6 +136,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 - hosted: `tunnel-client doctor` `RESULT ok`. `tunnel-client run`은 runtime key로 hosted control plane polling을 시작했고 `/healthz` live, `/readyz` ready. Responses API(`type: mcp`, `tunnel_id`) 호출 시 OpenAI → tunnel-service → `tunnel-client` → stdio child로 `server/discover`, `tools/list`가 전달되어 성공 응답했다(stdio tap으로 확인). model 추론은 API 계정 credit 부족(`429 credit_balance_exhausted`)으로 실패해 hosted `tools/call`은 확인하지 못했다. 종료 시 child 정리도 확인
 - Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(319), build 통과. Node 24 시절에는 root 사용자로도 확인
 - ChatGPT UI (2026-09-23): ChatGPT 웹 Developer mode에서 인증 없음으로 만든 Secure MCP Tunnel connector 경유로 hosted `tools/call`을 확인했다(PRD 15-1). `get_workspace_info`, `list_directory`, `read_file`이 성공했고, `write_file`은 `read_file`로 받은 revision을 넘겨 기존 내용을 보존한 채 항목을 추가했다. `.env` read는 `PATH_BLOCKED`로 거부됐고 message에 host 경로가 없었다. audit 파일에는 7건이 권한 `0600`으로 기록됐다. connector를 OAuth로 만들면 ChatGPT가 "MCP server ... does not implement OAuth" 오류를 내며, 이때 요청은 child까지 오지 않는다
+- container 격리 (2026-09-23): `docker run -i --network none --read-only -u 12345:12345`(passwd entry 없음, `HOME=/`)로 `node:26-bookworm`에서 stdio로 직접 호출했다. startup이 M27 검사를 통과했고 `read_file`, `write_file`(새 파일 생성)이 성공했으며 audit 파일이 권한 `0600`으로 기록됐다
 - 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
 ## 7. Future TODO
@@ -136,4 +147,5 @@ PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은
 - Phase 2·3에서 보류한 항목: line/range 교체, diff·미리보기, 여러 edit를 한 호출에, regex 검색(선형 시간 엔진 필요), 문자 class·escape가 있는 glob. ChatGPT UI에서 새 tool 3개 직접 확인
 - 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
+- README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
 - CI(`ubuntu`/`macos`/`windows` matrix) 첫 실행 결과 확인. 특히 Windows job (remote 미설정으로 아직 실행되지 않음)

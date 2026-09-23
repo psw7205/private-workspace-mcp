@@ -17,10 +17,23 @@ export const DEFAULT_DENY_PATTERNS: readonly string[] = [
   '.npmrc',
   '.netrc',
   'credentials*',
-  'secrets*',
+  'secret*',
   // Not in the PRD examples: hooks are executed by the user's next git command,
   // and .git/config can hold credentials. Git access is deferred to a typed tool.
   '.git',
+  '.git-credentials',
+  // Credential files commonly found outside the directories above.
+  'service-account*.json',
+  'id_rsa*',
+  'id_ed25519*',
+  '*.tfstate',
+  '*.tfstate.*',
+  '.kube',
+  'kubeconfig*',
+  '.docker',
+  '.pypirc',
+  '*.p12',
+  '*.pfx',
 ];
 
 export type DenyMatcher = (relativePath: string) => boolean;

@@ -25,6 +25,23 @@ describe('isDenied', () => {
     '.git',
     '.git/config',
     'vendor/lib/.git/hooks/pre-commit',
+    'config/secret.yaml',
+    'secretary.md',
+    'gcp/service-account.json',
+    'gcp/Service-Account-prod.json',
+    'backup/id_rsa',
+    'backup/id_rsa_backup',
+    'id_ed25519.pub',
+    'infra/terraform.tfstate',
+    'infra/terraform.tfstate.backup',
+    '.kube/config',
+    'kubeconfig',
+    'deploy/kubeconfig.yaml',
+    '.docker/config.json',
+    '.pypirc',
+    '.git-credentials',
+    'certs/client.p12',
+    'certs/client.PFX',
   ])('denies %j', (relativePath) => {
     expect(isDenied(relativePath)).toBe(true);
   });
@@ -41,6 +58,11 @@ describe('isDenied', () => {
     '.github/workflows/ci.yml',
     'docs/my-secrets-notes.md',
     'src/credential.ts',
+    'docs/service-account.md',
+    'docs/kube.md',
+    'Dockerfile',
+    'docker-compose.yml',
+    'infra/main.tf',
   ])('allows %j', (relativePath) => {
     expect(isDenied(relativePath)).toBe(false);
   });

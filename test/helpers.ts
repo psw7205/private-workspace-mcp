@@ -20,10 +20,10 @@ export interface Fixture {
  *   <base>/workspace/
  *     README.md, src/index.ts, .env, .git/config
  *     link-inside-file -> src/index.ts      link-inside-dir -> src
- *     link-outside-file -> outside/secret.txt
+ *     link-outside-file -> outside/private.txt
  *     link-outside-dir -> outside           link-parent -> ..
  *     link-to-env -> .env                   link-dangling -> outside/missing
- *   <base>/outside/secret.txt
+ *   <base>/outside/private.txt
  */
 export async function createFixture(): Promise<Fixture> {
   const base = await mkdtemp(path.join(tmpdir(), 'pwmcp-'));
@@ -38,12 +38,12 @@ export async function createFixture(): Promise<Fixture> {
   await writeFile(path.join(root, 'src/index.ts'), 'export {};\n');
   await writeFile(path.join(root, '.env'), 'SECRET=1\n');
   await writeFile(path.join(root, '.git/config'), '[core]\n');
-  await writeFile(path.join(outsideRaw, 'secret.txt'), 'outside secret\n');
+  await writeFile(path.join(outsideRaw, 'private.txt'), 'outside secret\n');
 
   await symlink('src/index.ts', path.join(root, 'link-inside-file'));
   // Directory links need an explicit type on Windows; POSIX ignores it.
   await symlink('src', path.join(root, 'link-inside-dir'), 'dir');
-  await symlink(path.join(outsideRaw, 'secret.txt'), path.join(root, 'link-outside-file'));
+  await symlink(path.join(outsideRaw, 'private.txt'), path.join(root, 'link-outside-file'));
   await symlink(outsideRaw, path.join(root, 'link-outside-dir'), 'dir');
   await symlink('..', path.join(root, 'link-parent'), 'dir');
   await symlink('.env', path.join(root, 'link-to-env'));

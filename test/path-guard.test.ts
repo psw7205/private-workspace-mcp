@@ -123,9 +123,9 @@ describe('PathGuard', () => {
     it.each([
       'link-outside-file',
       'link-outside-dir',
-      'link-outside-dir/secret.txt',
+      'link-outside-dir/private.txt',
       'link-parent',
-      'link-parent/outside/secret.txt',
+      'link-parent/outside/private.txt',
     ])('blocks symlink escape via %j', async (input) => {
       await expectWorkspaceError(guard.resolveExisting(input), 'PATH_OUTSIDE_WORKSPACE');
     });
@@ -155,7 +155,7 @@ describe('PathGuard', () => {
     });
 
     it('never puts host paths in error messages', async () => {
-      for (const input of ['link-outside-dir/secret.txt', 'missing.txt', '/etc/passwd', 'README.md/x', '.env']) {
+      for (const input of ['link-outside-dir/private.txt', 'missing.txt', '/etc/passwd', 'README.md/x', '.env']) {
         const error = await guard.resolveExisting(input).catch((caught: Error) => caught);
         expect(error).toBeInstanceOf(Error);
         expectNoHostPath((error as Error).message, fixture);

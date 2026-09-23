@@ -153,7 +153,7 @@ describe('editTextFile', () => {
     ['link-to-env', 'INVALID_PATH'],
     ['link-inside-file', 'INVALID_PATH'],
     ['link-outside-file', 'INVALID_PATH'],
-    ['link-outside-dir/secret.txt', 'PATH_OUTSIDE_WORKSPACE'],
+    ['link-outside-dir/private.txt', 'PATH_OUTSIDE_WORKSPACE'],
   ] as const)('refuses to edit %j', async (input, code) => {
     const error = await expectWorkspaceError(
       editTextFile(guard, readWrite, {

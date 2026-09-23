@@ -138,7 +138,7 @@ describe('stdio server', () => {
 
     it('returns classified errors for escapes and denied files without host paths', async () => {
       for (const [args, code] of [
-        [{ path: '../outside/secret.txt' }, 'PATH_OUTSIDE_WORKSPACE'],
+        [{ path: '../outside/private.txt' }, 'PATH_OUTSIDE_WORKSPACE'],
         [{ path: 'link-outside-file' }, 'PATH_OUTSIDE_WORKSPACE'],
         [{ path: '.env' }, 'PATH_BLOCKED'],
       ] as const) {
