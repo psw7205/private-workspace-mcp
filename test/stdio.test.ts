@@ -79,11 +79,13 @@ describe('stdio server', () => {
         'get_workspace_info',
         'list_directory',
         'read_file',
+        'search_text',
         'write_file',
       ]);
       expect(byName.read_file?.annotations?.readOnlyHint).toBe(true);
       expect(byName.list_directory?.annotations?.readOnlyHint).toBe(true);
       expect(byName.find_files?.annotations?.readOnlyHint).toBe(true);
+      expect(byName.search_text?.annotations?.readOnlyHint).toBe(true);
       expect(byName.write_file?.annotations?.destructiveHint).toBe(true);
       expect(byName.edit_file?.annotations?.destructiveHint).toBe(true);
     });
@@ -155,6 +157,22 @@ describe('stdio server', () => {
       expectNoHostPath(JSON.stringify(found), fixture);
     });
 
+    it('searches text without denied files or content in the audit log', async () => {
+      const found = parseText(await session.client.callTool({ name: 'search_text', arguments: { query: 'export' } }));
+      expect(found.matches).toContainEqual({ path: 'src/index.ts', line: 1, column: 1, text: 'export {};' });
+      expect(found).not.toHaveProperty('bytesRead');
+      const secret = parseText(await session.client.callTool({ name: 'search_text', arguments: { query: 'SECRET' } }));
+      expect(secret.matches).toEqual([]);
+      expectNoHostPath(JSON.stringify(found), fixture);
+      const audit = session
+        .stderr()
+        .split('\n')
+        .filter((line) => line.includes('"search_text"'));
+      expect(audit.at(-1)).not.toContain('SECRET');
+      expect(JSON.parse(audit[0] ?? '{}')).toMatchObject({ tool: 'search_text', ok: true });
+      expect(JSON.parse(audit[0] ?? '{}').bytes_read).toBeGreaterThan(0);
+    });
+
     it('rejects a depth above the configured maximum before running', async () => {
       const result = await session.client.callTool({ name: 'list_directory', arguments: { path: '.', depth: 3 } });
       expect((result as ToolText).isError).toBe(true);
@@ -179,7 +197,7 @@ describe('stdio server', () => {
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe('2026-07-28');
       const { tools } = await session.client.listTools();
-      expect(tools).toHaveLength(6);
+      expect(tools).toHaveLength(7);
       const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'src/index.ts' } }));
       expect(read.content).toBe('export {};\n');
     } finally {

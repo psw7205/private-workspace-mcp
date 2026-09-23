@@ -8,6 +8,7 @@ import { registerEditFile } from '../tools/edit-file.js';
 import { registerFindFiles } from '../tools/find-files.js';
 import { registerListDirectory } from '../tools/list-directory.js';
 import { registerReadFile } from '../tools/read-file.js';
+import { registerSearchText } from '../tools/search-text.js';
 import { registerWorkspaceInfo } from '../tools/workspace-info.js';
 import { registerWriteFile } from '../tools/write-file.js';
 
@@ -26,6 +27,7 @@ export function createServerFactory(config: Config, audit: AuditSink = stderrAud
     registerWriteFile(server, deps);
     registerEditFile(server, deps);
     registerFindFiles(server, deps);
+    registerSearchText(server, deps);
     return server;
   };
 }

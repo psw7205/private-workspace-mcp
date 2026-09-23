@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { findFiles } from '../src/filesystem/file-search.js';
+import { findFiles, searchText } from '../src/filesystem/file-search.js';
 import { PathGuard } from '../src/filesystem/path-guard.js';
 import { createDenyMatcher, DEFAULT_DENY_PATTERNS } from '../src/policy/deny-list.js';
 import { createFixture, expectNoHostPath, expectWorkspaceError, type Fixture } from './helpers.js';
@@ -195,5 +195,126 @@ describe('findFiles with ignore files', () => {
     await writeFile(path.join(base, 'secrets/.env'), 'SECRET=1\n');
     expect(await find('.', true)).not.toContain('secrets/.env');
     expect(await find()).not.toContain('secrets/.env');
+  });
+});
+
+describe('searchText', () => {
+  let fixture: Fixture;
+  let guard: PathGuard;
+  const long = `${'a'.repeat(300)}NEEDLE${'b'.repeat(300)}`;
+
+  beforeAll(async () => {
+    fixture = await createFixture();
+    guard = new PathGuard(fixture.realRoot);
+    const write = async (relative: string, content: string | Buffer) => {
+      await mkdir(path.dirname(path.join(fixture.root, relative)), { recursive: true });
+      await writeFile(path.join(fixture.root, relative), content);
+    };
+    await write('src/a.ts', 'const needle = 1;\nconst other = 2;\n// Needle needle again\n');
+    await write('src/b.md', 'first line\r\nhas NEEDLE here\r\n');
+    await write('src/long.txt', `${long}\n`);
+    await write('src/bin.dat', Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x00]));
+    await write('src/latin1.txt', Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0xe9, 0x0a]));
+    await write('src/big.txt', `needle${'x'.repeat(2000)}`);
+    await write('.env', 'NEEDLE=secret\n');
+    await write('.gitignore', 'ignored/\n');
+    await write('ignored/c.ts', 'needle\n');
+  });
+
+  afterAll(async () => {
+    await fixture.cleanup();
+  });
+
+  const search = (
+    query: string,
+    extra: { path?: string; glob?: string; caseSensitive?: boolean; includeIgnored?: boolean; limit?: number } = {},
+    searchOptions: { maxSearchFiles?: number; signal?: AbortSignal } = {},
+  ) =>
+    searchText(
+      guard,
+      { maxSearchFiles: searchOptions.maxSearchFiles ?? 100, maxReadBytes: 1024, signal: searchOptions.signal },
+      {
+        path: extra.path ?? '.',
+        query,
+        glob: extra.glob,
+        caseSensitive: extra.caseSensitive ?? false,
+        includeIgnored: extra.includeIgnored ?? false,
+        limit: extra.limit ?? 100,
+      },
+    );
+
+  it('finds the first match of each line, ignoring case by default', async () => {
+    const result = await search('needle', { path: 'src', glob: '*.{ts,md}' });
+    expect(result).toEqual({
+      path: 'src',
+      query: 'needle',
+      matches: [
+        { path: 'src/a.ts', line: 1, column: 7, text: 'const needle = 1;' },
+        { path: 'src/a.ts', line: 3, column: 4, text: '// Needle needle again' },
+        { path: 'src/b.md', line: 2, column: 5, text: 'has NEEDLE here' },
+      ],
+      files_searched: 3,
+      truncated: false,
+      scan_limit_reached: false,
+      bytesRead: expect.any(Number),
+    });
+  });
+
+  it('matches case-sensitively on request', async () => {
+    const result = await search('Needle', { path: 'src', glob: '*.ts', caseSensitive: true });
+    expect(result.matches).toEqual([{ path: 'src/a.ts', line: 3, column: 4, text: '// Needle needle again' }]);
+  });
+
+  it('treats the query literally', async () => {
+    expect((await search('n.edle', { path: 'src' })).matches).toEqual([]);
+    expect((await search('(a+)+$', { path: 'src' })).matches).toEqual([]);
+  });
+
+  it('shows a window around a match in a long line', async () => {
+    const [match] = (await search('NEEDLE', { path: 'src', glob: 'long.txt' })).matches;
+    expect(match?.column).toBe(301);
+    expect(match?.text.length).toBeLessThanOrEqual(202);
+    expect(match?.text).toContain('NEEDLE');
+  });
+
+  it('skips binary, non-UTF-8, oversized, denied, symlinked, and ignored files', async () => {
+    const paths = new Set((await search('needle')).matches.map((match) => match.path));
+    expect([...paths].sort()).toEqual(['src/a.ts', 'src/b.md', 'src/long.txt']);
+  });
+
+  it('searches ignored files on request, but never denied ones', async () => {
+    const paths = (await search('needle', { includeIgnored: true })).matches.map((match) => match.path);
+    expect(paths).toContain('ignored/c.ts');
+    expect(paths).not.toContain('.env');
+  });
+
+  it('truncates at the result limit', async () => {
+    const result = await search('needle', { limit: 1 });
+    expect(result.matches).toHaveLength(1);
+    expect(result).toMatchObject({ truncated: true, scan_limit_reached: false });
+  });
+
+  it('stops at the scanned-file limit', async () => {
+    const result = await search('needle', {}, { maxSearchFiles: 1 });
+    expect(result).toMatchObject({ truncated: true, scan_limit_reached: true });
+  });
+
+  it('stops once the signal is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(search('needle', {}, { signal: controller.signal })).rejects.toThrow();
+  });
+
+  it.each([
+    ['src/a.ts', 'NOT_A_DIRECTORY'],
+    ['link-outside-dir', 'PATH_OUTSIDE_WORKSPACE'],
+    ['.git', 'PATH_BLOCKED'],
+  ] as const)('rejects search path %j', async (input, code) => {
+    const error = await expectWorkspaceError(search('needle', { path: input }), code);
+    expectNoHostPath(error.message, fixture);
+  });
+
+  it('never returns host paths', async () => {
+    expectNoHostPath(JSON.stringify(await search('e')), fixture);
   });
 });
