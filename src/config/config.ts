@@ -12,6 +12,8 @@ export interface Limits {
   maxDirectoryEntries: number;
   maxDepth: number;
   requestTimeoutMs: number;
+  /** Regular files a find_files/search_text walk may visit. */
+  maxSearchFiles: number;
 }
 
 export interface AuditConfig {
@@ -41,6 +43,7 @@ const LIMIT_ENV: Record<keyof Limits, [name: string, fallback: number, max?: num
   maxDirectoryEntries: ['WORKSPACE_MAX_DIRECTORY_ENTRIES', 1000],
   maxDepth: ['WORKSPACE_MAX_DEPTH', 3],
   requestTimeoutMs: ['WORKSPACE_REQUEST_TIMEOUT_MS', 10_000, MAX_TIMER_MS],
+  maxSearchFiles: ['WORKSPACE_MAX_SEARCH_FILES', 10_000],
 };
 
 /** Reads configuration from the environment and fails closed on any invalid value. */

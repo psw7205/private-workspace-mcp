@@ -14,6 +14,7 @@ const outputSchema = z.object({
     max_directory_entries: z.number(),
     max_depth: z.number(),
     request_timeout_ms: z.number(),
+    max_search_files: z.number(),
   }),
 });
 
@@ -41,6 +42,7 @@ export function registerWorkspaceInfo(server: McpServer, { config, audit }: Tool
             max_directory_entries: config.limits.maxDirectoryEntries,
             max_depth: config.limits.maxDepth,
             request_timeout_ms: config.limits.requestTimeoutMs,
+            max_search_files: config.limits.maxSearchFiles,
           },
         },
       })),

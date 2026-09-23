@@ -1,8 +1,9 @@
+import type { Dirent } from 'node:fs';
 import { lstat, readdir, stat } from 'node:fs/promises';
-import path from 'node:path';
 
 import { fromFsError, WorkspaceError } from '../errors/errors.js';
 import type { PathGuard } from './path-guard.js';
+import { allowedEntries } from './workspace-walker.js';
 
 export interface DirectoryEntry {
   path: string;
@@ -39,7 +40,7 @@ export async function listDirectory(guard: PathGuard, params: ListDirectoryParam
   let truncated = false;
 
   const walk = async (directory: string, directoryRelative: string, level: number): Promise<void> => {
-    let children;
+    let children: Dirent[];
     try {
       children = await readdir(directory, { withFileTypes: true });
     } catch (error) {
@@ -47,16 +48,13 @@ export async function listDirectory(guard: PathGuard, params: ListDirectoryParam
       if (level === 1) throw fromFsError(error, relativePath);
       return;
     }
-    children.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
-    for (const child of children) {
-      const childRelative = directoryRelative === '.' ? child.name : `${directoryRelative}/${child.name}`;
-      const childAbsolute = path.join(directory, child.name);
-      if (guard.isDenied(childRelative) || guard.isDenied(guard.assertInside(childAbsolute, childRelative))) continue;
-
-      const type = child.isSymbolicLink() ? 'symlink' : child.isDirectory() ? 'directory' : child.isFile() ? 'file' : undefined;
-      if (type === undefined) continue;
-
+    for (const { relativePath: childRelative, absolutePath: childAbsolute, type } of allowedEntries(
+      guard,
+      directory,
+      directoryRelative,
+      children,
+    )) {
       if (entries.length >= params.limit) {
         truncated = true;
         return;

@@ -25,7 +25,7 @@ export interface ToolOutcome<T> {
  */
 export async function runTool<T extends Record<string, unknown>>(
   options: RunToolOptions,
-  operation: () => Promise<ToolOutcome<T>>,
+  operation: (signal: AbortSignal) => Promise<ToolOutcome<T>>,
 ): Promise<CallToolResult> {
   const startedAt = performance.now();
   const base = {
@@ -37,10 +37,13 @@ export async function runTool<T extends Record<string, unknown>>(
   };
   const elapsed = () => Math.round(performance.now() - startedAt);
 
+  // Operations that loop (searches) check the signal and stop after a timeout.
+  const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       // Node.js cannot cancel filesystem calls already in flight.
+      controller.abort();
       reject(
         new WorkspaceError(
           'TIMEOUT',
@@ -51,7 +54,7 @@ export async function runTool<T extends Record<string, unknown>>(
   });
 
   try {
-    const outcome = await Promise.race([operation(), timeout]);
+    const outcome = await Promise.race([operation(controller.signal), timeout]);
     options.audit({
       ...base,
       ok: true,

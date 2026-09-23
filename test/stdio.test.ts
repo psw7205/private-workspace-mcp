@@ -75,6 +75,7 @@ describe('stdio server', () => {
       const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
       expect(Object.keys(byName).sort()).toEqual([
         'edit_file',
+        'find_files',
         'get_workspace_info',
         'list_directory',
         'read_file',
@@ -82,6 +83,7 @@ describe('stdio server', () => {
       ]);
       expect(byName.read_file?.annotations?.readOnlyHint).toBe(true);
       expect(byName.list_directory?.annotations?.readOnlyHint).toBe(true);
+      expect(byName.find_files?.annotations?.readOnlyHint).toBe(true);
       expect(byName.write_file?.annotations?.destructiveHint).toBe(true);
       expect(byName.edit_file?.annotations?.destructiveHint).toBe(true);
     });
@@ -145,6 +147,14 @@ describe('stdio server', () => {
       }
     });
 
+    it('finds files by glob without denied entries', async () => {
+      const found = parseText(await session.client.callTool({ name: 'find_files', arguments: { pattern: '**/*' } }));
+      const paths = found.files.map((file: { path: string }) => file.path);
+      expect(paths).toContain('src/index.ts');
+      expect(paths).not.toContain('.env');
+      expectNoHostPath(JSON.stringify(found), fixture);
+    });
+
     it('rejects a depth above the configured maximum before running', async () => {
       const result = await session.client.callTool({ name: 'list_directory', arguments: { path: '.', depth: 3 } });
       expect((result as ToolText).isError).toBe(true);
@@ -169,7 +179,7 @@ describe('stdio server', () => {
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe('2026-07-28');
       const { tools } = await session.client.listTools();
-      expect(tools).toHaveLength(5);
+      expect(tools).toHaveLength(6);
       const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'src/index.ts' } }));
       expect(read.content).toBe('export {};\n');
     } finally {

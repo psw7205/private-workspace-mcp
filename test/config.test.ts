@@ -35,6 +35,7 @@ describe('loadConfig', () => {
         maxDirectoryEntries: 1000,
         maxDepth: 3,
         requestTimeoutMs: 10_000,
+        maxSearchFiles: 10_000,
       },
       audit: { maxBytes: 10_485_760 },
       denyPatterns: [...DEFAULT_DENY_PATTERNS],
@@ -65,6 +66,7 @@ describe('loadConfig', () => {
       WORKSPACE_MAX_DIRECTORY_ENTRIES: '30',
       WORKSPACE_MAX_DEPTH: '2',
       WORKSPACE_REQUEST_TIMEOUT_MS: '500',
+      WORKSPACE_MAX_SEARCH_FILES: '40',
     });
     expect(config.mode).toBe('read-write');
     expect(config.name).toBe('alias');
@@ -74,6 +76,7 @@ describe('loadConfig', () => {
       maxDirectoryEntries: 30,
       maxDepth: 2,
       requestTimeoutMs: 500,
+      maxSearchFiles: 40,
     });
   });
 

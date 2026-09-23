@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
+    "ignore": "^7.0.10",
     "zod": "^4.6.5"
   },
   "devDependencies": {

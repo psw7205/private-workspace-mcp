@@ -11,6 +11,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.0.0
         version: 2.0.0
+      ignore:
+        specifier: ^7.0.10
+        version: 7.0.10
       zod:
         specifier: ^4.6.5
         version: 4.6.5
@@ -525,6 +528,10 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  ignore@7.0.10:
+    resolution: {integrity: sha512-HpbUakT7xp5miBUywCHf36ZEuAJNklBJDDsGpUIjMzOSmM8ELSfA9Sa/QDPeNeqeoN31u+UTCkL4klCOVvRm4Q==}
+    engines: {node: '>= 4'}
 
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
@@ -1120,6 +1127,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  ignore@7.0.10: {}
 
   isexe@2.0.0: {}
 

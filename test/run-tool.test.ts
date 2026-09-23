@@ -61,4 +61,14 @@ describe('runTool', () => {
     expect(JSON.parse((result.content[0] as { text: string }).text).error.code).toBe('TIMEOUT');
     expect(records[0]).toMatchObject({ ok: false, error_code: 'TIMEOUT' });
   });
+
+  it('aborts the operation signal when it times out', async () => {
+    const { options } = setup(20);
+    let signal: AbortSignal | undefined;
+    await runTool(options, (received) => {
+      signal = received;
+      return new Promise<never>(() => undefined);
+    });
+    expect(signal?.aborted).toBe(true);
+  });
 });

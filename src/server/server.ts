@@ -5,6 +5,7 @@ import type { Config } from '../config/config.js';
 import { PathGuard } from '../filesystem/path-guard.js';
 import { createDenyMatcher } from '../policy/deny-list.js';
 import { registerEditFile } from '../tools/edit-file.js';
+import { registerFindFiles } from '../tools/find-files.js';
 import { registerListDirectory } from '../tools/list-directory.js';
 import { registerReadFile } from '../tools/read-file.js';
 import { registerWorkspaceInfo } from '../tools/workspace-info.js';
@@ -24,6 +25,7 @@ export function createServerFactory(config: Config, audit: AuditSink = stderrAud
     registerReadFile(server, deps);
     registerWriteFile(server, deps);
     registerEditFile(server, deps);
+    registerFindFiles(server, deps);
     return server;
   };
 }
