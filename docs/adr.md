@@ -457,6 +457,8 @@ stdio child process이므로 별도 network authentication을 구현하지 않�
 
 OS permission + workspace policy로 통제한다.
 
+> **Amendment (2026-09-23):** MCP 계층에 OAuth를 도입하지 않는다. ChatGPT connector는 "인증 없음"으로 만들고, 호출 가능 범위는 해당 tunnel에 Tunnels Use 권한을 가진 OpenAI 사용자로 정해진다. 이유: 배포 형태가 운영자 = 데이터 소유자인 self-host이고, public endpoint가 없어 요청은 OpenAI tunnel 경로로만 들어오며, MCP authorization spec은 HTTP transport 대상이다. OAuth를 붙이려면 HTTP transport 전환(3절, 16절 결정 번복)과 authorization server가 필요하다. 한계: 서버는 호출자를 구분하지 못하므로 사용자별 권한과 audit 주체 기록이 없다. 재검토 조건: 한 tunnel을 여러 사용자가 공유하면서 사용자별 권한이나 audit 주체가 필요해질 때, 또는 HTTP transport나 tunnel 밖 endpoint를 도입할 때. 그 전까지는 read-only 기본값, 좁은 `WORKSPACE_ROOT`, 권한이 다른 용도의 tunnel 분리로 대응한다.
+
 ---
 
 # 18. Data Boundary

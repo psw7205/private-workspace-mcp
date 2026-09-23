@@ -86,10 +86,9 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 
 - OpenAI 경로만 쓰면 child는 modern으로 pin되고 정상 동작한다.
 - 2025-era(legacy) client가 같은 tunnel-client의 child에 **먼저** 붙으면 child가 legacy로 pin되어 이후 OpenAI 요청이 실패한다. 이때는 `tunnel-client`를 재시작하면 복구된다.
-- `legacy: 'reject'`(modern 전용)는 OpenAI 경로를 항상 보장하지만, ChatGPT UI connector의 era를 아직 검증하지 못해 채택하지 않았다. ChatGPT도 같은 connector 인프라(`openai-mcp-discover`)를 쓸 가능성이 높다는 것은 추정이다.
-- era routing(message 단위 분류)은 ChatGPT가 legacy를 쓰는 것으로 확인될 때 별도 결정으로 다룬다.
+- `legacy: 'reject'`(modern 전용)는 채택하지 않았다. 채택 당시에는 ChatGPT UI connector의 era를 검증하지 못했기 때문이다.
 
-unresolved: ChatGPT UI connector의 protocol era. connector 생성에는 사용자 ChatGPT 로그인이 필요하다.
+**ChatGPT UI 관측 결과 (2026-09-23, `tunnel-client` 0.0.14):** ChatGPT 웹 Developer mode에서 Secure MCP Tunnel connector를 만들었을 때 child에 온 요청은 `rpc_request_id` `openai-mcp-discover` 다음 `0`이었다. Responses API 경로와 같은 순서와 id이므로 ChatGPT UI도 `2026-07-28` modern era(`server/discover` → `tools/list`)로 요청한다고 본다. `tunnel-client` 로그에는 method 이름이 남지 않아 id 일치에 근거한 판단이다. 이로써 OpenAI의 두 경로(Responses API, ChatGPT UI)가 모두 modern이므로 legacy pin 위험은 같은 tunnel에 2025-era client를 따로 붙이는 경우로 한정된다. era routing은 도입하지 않는다.
 
 ## 5. 구현 계획
 
@@ -113,11 +112,13 @@ unresolved: ChatGPT UI connector의 protocol era. connector 생성에는 사용�
 - `pnpm e2e:tunnel`: `tunnel-client` 0.0.14 `dev proxy --mcp-command` 경유로 tools/list, 4개 tool 호출, revision conflict, escape/deny 거부, audit이 `tunnel-client` 로그에 기록되는지 확인. `tunnel-client` SIGTERM과 SIGKILL 양쪽에서 MCP child 종료
 - hosted: `tunnel-client doctor` `RESULT ok`. `tunnel-client run`은 runtime key로 hosted control plane polling을 시작했고 `/healthz` live, `/readyz` ready. Responses API(`type: mcp`, `tunnel_id`) 호출 시 OpenAI → tunnel-service → `tunnel-client` → stdio child로 `server/discover`, `tools/list`가 전달되어 성공 응답했다(stdio tap으로 확인). model 추론은 API 계정 credit 부족(`429 credit_balance_exhausted`)으로 실패해 hosted `tools/call`은 확인하지 못했다. 종료 시 child 정리도 확인
 - Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(227), build 통과. Node 24 시절에는 root 사용자로도 확인
-- 미검증: ChatGPT UI connector 경로(PRD 15-1)와 hosted `tools/call`. 원인은 각각 ChatGPT 로그인 필요, API credit 부족
+- ChatGPT UI (2026-09-23): ChatGPT 웹 Developer mode에서 인증 없음으로 만든 Secure MCP Tunnel connector 경유로 hosted `tools/call`을 확인했다(PRD 15-1). `get_workspace_info`, `list_directory`, `read_file`이 성공했고, `write_file`은 `read_file`로 받은 revision을 넘겨 기존 내용을 보존한 채 항목을 추가했다. `.env` read는 `PATH_BLOCKED`로 거부됐고 message에 host 경로가 없었다. audit 파일에는 7건이 권한 `0600`으로 기록됐다. connector를 OAuth로 만들면 ChatGPT가 "MCP server ... does not implement OAuth" 오류를 내며, 이때 요청은 child까지 오지 않는다
+- 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
 ## 7. Future TODO
 
 PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은 구현하지 않았다. MVP 구현 중 추가로 나온 항목은 다음과 같다.
 
-- ChatGPT UI connector로 검증하고 era 확인(4절). API credit을 충전한 뒤 hosted `tools/call` 확인
+- API credit을 충전한 뒤 Responses API 경로의 `tools/call` 확인
+- `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
 - CI(`ubuntu`/`macos`/`windows` matrix) 첫 실행 결과 확인. 특히 Windows job (remote 미설정으로 아직 실행되지 않음)

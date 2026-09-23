@@ -100,7 +100,14 @@ tunnel-client doctor --profile workspace-mcp --explain
 tunnel-client run --profile workspace-mcp
 ```
 
-`run`이 healthy인 동안 ChatGPT Settings > Connectors에서 connector를 만들거나 확인한다. Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
+`run`이 healthy인 동안 ChatGPT에서 connector를 만든다.
+
+1. Settings > Security and login에서 Developer mode를 켠다.
+2. https://chatgpt.com/plugins 에서 새 connector를 추가하고 Connection으로 Tunnel을 골라 tunnel을 선택한다(또는 `tunnel_id` 입력).
+3. 인증은 **인증 없음(No authentication)**을 고른다. 이 서버는 OAuth를 구현하지 않으므로 OAuth를 고르면 "does not implement OAuth" 오류가 난다. 접근 통제는 OpenAI의 tunnel 권한이 맡는다(ADR 17 Amendment).
+4. tool 4개가 발견되는지 확인한다.
+
+Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
 
 주의:
 
