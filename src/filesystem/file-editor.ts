@@ -68,6 +68,7 @@ export async function editTextFile(
     path: params.path,
     content: parts.join(params.newString),
     expectedRevision: params.expectedRevision,
+    mustExist: true,
   });
   return { path: result.path, replacements, bytes_written: result.bytes_written, revision: result.revision };
 }

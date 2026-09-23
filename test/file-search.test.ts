@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -120,12 +119,18 @@ describe('findFiles', () => {
   it('never returns host paths', async () => {
     expectNoHostPath(JSON.stringify(await find('**')), fixture);
   });
+
+  it('rejects a glob that expands too far before walking', async () => {
+    const error = await expectWorkspaceError(find('{a,b}'.repeat(7)), 'INVALID_PATH');
+    expectNoHostPath(error.message, fixture);
+  });
 });
 
 describe('findFiles with ignore files', () => {
-  let base: string;
+  let fixture: Fixture;
   let guard: PathGuard;
 
+  // Rooted at proj/ inside the standard fixture so the fixture's own files stay out of the way.
   const files: Record<string, string> = {
     '.gitignore': 'dist/\n*.log\n!keep.log\nlogs/\n',
     'a.log': 'x',
@@ -147,54 +152,61 @@ describe('findFiles with ignore files', () => {
   };
 
   beforeAll(async () => {
-    base = path.join(await realpath(await mkdtemp(path.join(tmpdir(), 'pwmcp-ignore-'))), 'workspace');
+    fixture = await createFixture();
+    guard = new PathGuard(fixture.realRoot);
+    const inProject = (relative: string) => path.join(fixture.root, 'proj', relative);
     for (const [relative, content] of Object.entries(files)) {
-      await mkdir(path.dirname(path.join(base, relative)), { recursive: true });
-      await writeFile(path.join(base, relative), content);
+      await mkdir(path.dirname(inProject(relative)), { recursive: true });
+      await writeFile(inProject(relative), content);
     }
     // A symlinked ignore file is not followed, so "*" here must not hide linked/data.txt.
-    await symlink(path.join(base, 'star.txt'), path.join(base, 'linked/.ignore'));
-    guard = new PathGuard(base);
+    await symlink(inProject('star.txt'), inProject('linked/.ignore'));
   });
 
   afterAll(async () => {
-    await rm(path.dirname(base), { recursive: true, force: true });
+    await fixture.cleanup();
   });
 
-  const find = async (searchPath = '.', includeIgnored = false) =>
+  const find = async (searchPath = 'proj', includeIgnored = false) =>
     (await findFiles(guard, options, { path: searchPath, pattern: '**', limit: 100, includeIgnored })).files.map(
       (file) => file.path,
     );
 
   it('applies .gitignore and .ignore rules from every traversed directory', async () => {
-    expect(await find()).toEqual([
-      'generated.ts',
-      'keep.log',
-      'linked/data.txt',
-      'logs',
-      'pkg/build.txt',
-      'pkg/sub/a.log',
-      'src/main.ts',
-      'star.txt',
-    ]);
+    expect(await find()).toEqual(
+      [
+        'generated.ts',
+        'keep.log',
+        'linked/data.txt',
+        'logs',
+        'pkg/build.txt',
+        'pkg/sub/a.log',
+        'src/main.ts',
+        'star.txt',
+      ].map((relative) => `proj/${relative}`),
+    );
   });
 
   it('applies ignore files above the search path', async () => {
-    expect(await find('pkg')).toEqual(['pkg/build.txt', 'pkg/sub/a.log']);
-    expect(await find('src')).toEqual(['src/main.ts']);
+    expect(await find('proj/pkg')).toEqual(['proj/pkg/build.txt', 'proj/pkg/sub/a.log']);
+    expect(await find('proj/src')).toEqual(['proj/src/main.ts']);
+  });
+
+  it('searches a directory the caller names even when ignore rules above it exclude it', async () => {
+    expect(await find('proj/dist')).toEqual(['proj/dist/out.js']);
   });
 
   it('includes ignored files on request', async () => {
-    const all = await find('.', true);
-    expect(all).toContain('dist/out.js');
-    expect(all).toContain('src/generated.ts');
-    expect(all).toContain('pkg/tmp/a.txt');
+    const all = await find('proj', true);
+    expect(all).toContain('proj/dist/out.js');
+    expect(all).toContain('proj/src/generated.ts');
+    expect(all).toContain('proj/pkg/tmp/a.txt');
   });
 
   it('keeps the deny list in force when ignore files are skipped or negate it', async () => {
-    await writeFile(path.join(base, 'secrets/.env'), 'SECRET=1\n');
-    expect(await find('.', true)).not.toContain('secrets/.env');
-    expect(await find()).not.toContain('secrets/.env');
+    await writeFile(path.join(fixture.root, 'proj/secrets/.env'), 'SECRET=1\n');
+    expect(await find('proj', true)).not.toContain('proj/secrets/.env');
+    expect(await find()).not.toContain('proj/secrets/.env');
   });
 });
 

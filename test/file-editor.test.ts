@@ -87,6 +87,12 @@ describe('editTextFile', () => {
     expect(await readFile(inRoot('crlf.txt'), 'utf8')).toBe('﻿one\r\nTWO\r\n');
   });
 
+  it('refuses an edit that would split a surrogate pair', async () => {
+    await writeFile(inRoot('emoji.txt'), 'a\u{1F600}b\n');
+    await expectWorkspaceError(edit('emoji.txt', '\ud83d', 'X'), 'BINARY_FILE');
+    expect(await readFile(inRoot('emoji.txt'), 'utf8')).toBe('a\u{1F600}b\n');
+  });
+
   it('rejects a stale revision', async () => {
     await expectWorkspaceError(
       editTextFile(guard, readWrite, {

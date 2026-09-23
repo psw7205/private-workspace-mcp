@@ -170,6 +170,24 @@ describe('writeTextFile', () => {
     expect(await readFile(inRoot('large.txt'), 'utf8')).toBe(original);
   });
 
+  // Buffer.from would encode a lone surrogate as U+FFFD, so the file would not hold what was sent.
+  it('rejects content that is not well-formed Unicode', async () => {
+    await expectWorkspaceError(writeTextFile(guard, readWrite, { path: 'lone.txt', content: 'a\ud800b' }), 'BINARY_FILE');
+    await expect(stat(inRoot('lone.txt'))).rejects.toThrow();
+  });
+
+  it('reports a missing file instead of creating it when the file must exist', async () => {
+    await expectWorkspaceError(
+      writeTextFile(guard, readWrite, {
+        path: 'gone.md',
+        content: 'x',
+        expectedRevision: computeRevision(Buffer.from('x')),
+        mustExist: true,
+      }),
+      'FILE_NOT_FOUND',
+    );
+  });
+
   it('rejects a directory target', async () => {
     await expectWorkspaceError(writeTextFile(guard, readWrite, { path: 'src', content: 'x' }), 'NOT_A_FILE');
   });

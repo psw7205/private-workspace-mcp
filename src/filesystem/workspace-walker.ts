@@ -108,7 +108,8 @@ export interface WalkedFile {
  * loop. An unreadable nested directory is skipped; an unreadable start directory throws.
  *
  * Ignore rules are matched on canonical workspace-relative paths, so ignore files above
- * `start` (including when `start` was reached through a symlink) apply as well.
+ * `start` (including when `start` was reached through a symlink) apply as well, unless
+ * they ignore `start` itself.
  */
 export async function* walkFiles(
   guard: PathGuard,
@@ -126,6 +127,8 @@ export async function* walkFiles(
       const scope = await loadIgnoreScope(guard, path.join(root, ...segments.slice(0, depth)), canonical, options.ignoreFiles.maxBytes);
       if (scope !== undefined) ancestorScopes.push(scope);
     }
+    // The caller named this directory, so rules above it that exclude it must not empty the result.
+    if (isIgnored(ancestorScopes, startCanonical, true)) ancestorScopes.length = 0;
   }
 
   async function* walk(

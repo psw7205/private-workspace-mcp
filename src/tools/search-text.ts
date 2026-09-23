@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { searchText } from '../filesystem/file-search.js';
+import { MAX_GLOB_LENGTH } from '../filesystem/glob.js';
 import { runTool, type ToolDeps } from './run-tool.js';
 import { pathSchema } from './schemas.js';
 
@@ -29,8 +30,13 @@ export function registerSearchText(server: McpServer, { config, guard, audit }: 
         `A search visits at most ${maxSearchFiles} files; \`scan_limit_reached\` means narrow \`path\` or \`glob\`.`,
       inputSchema: z.object({
         path: pathSchema.default('.'),
-        query: z.string().min(1).max(1024).describe('Literal text to find'),
-        glob: z.string().min(1).max(1024).optional().describe('Only search files whose path relative to `path` matches this glob'),
+        query: z
+          .string()
+          .min(1)
+          .max(1024)
+          .regex(/^[^\r\n]*$/, 'query must be a single line')
+          .describe('Literal text to find within one line'),
+        glob: z.string().min(1).max(MAX_GLOB_LENGTH).optional().describe('Only search files whose path relative to `path` matches this glob'),
         case_sensitive: z.boolean().default(false),
         include_ignored: z.boolean().default(false).describe('Also search files ignored by .gitignore or .ignore'),
         limit: z

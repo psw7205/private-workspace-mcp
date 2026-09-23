@@ -1,8 +1,8 @@
 import { stat } from 'node:fs/promises';
-import path from 'node:path';
 
-import { WorkspaceError } from '../errors/errors.js';
+import { fromFsError, WorkspaceError } from '../errors/errors.js';
 import { decodeTextFile, readRegularFile } from './file-reader.js';
+import { compileGlob } from './glob.js';
 import type { PathGuard, ResolvedPath } from './path-guard.js';
 import { walkFiles, type WalkedFile, type WalkStats } from './workspace-walker.js';
 
@@ -32,11 +32,7 @@ export interface FindFilesResult {
   scan_limit_reached: boolean;
 }
 
-/**
- * Lists regular files whose path relative to `params.path` matches a glob. Matching uses
- * `path.posix.matchesGlob`: `*` stays within a segment, `**` spans segments, segments
- * starting with `.` match only when named, and case sensitivity follows the platform.
- */
+/** Lists regular files whose path relative to `params.path` matches a glob (see compileGlob). */
 export async function findFiles(guard: PathGuard, options: SearchOptions, params: FindFilesParams): Promise<FindFilesResult> {
   const base = await resolveSearchBase(guard, params.path);
   const matches = globMatcher(base, params.pattern);
@@ -159,17 +155,20 @@ function matchText(line: string, index: number): string {
 
 async function resolveSearchBase(guard: PathGuard, input: string): Promise<ResolvedPath> {
   const base = await guard.resolveExisting(input);
-  if (!(await stat(base.absolutePath)).isDirectory()) {
+  const info = await stat(base.absolutePath).catch((error: unknown) => {
+    throw fromFsError(error, base.relativePath);
+  });
+  if (!info.isDirectory()) {
     throw new WorkspaceError('NOT_A_DIRECTORY', `${base.relativePath} is not a directory`);
   }
   return base;
 }
 
-/** Matches a glob against a walked file's path relative to the search base; a leading `./` is dropped. */
+/** Matches a glob against a walked file's path relative to the search base. */
 function globMatcher(base: ResolvedPath, glob: string): (file: WalkedFile) => boolean {
-  const pattern = glob.replace(/^(\.\/)+/, '');
+  const matches = compileGlob(glob);
   const prefixLength = base.relativePath === '.' ? 0 : base.relativePath.length + 1;
-  return (file) => path.posix.matchesGlob(file.relativePath.slice(prefixLength), pattern);
+  return (file) => matches(file.relativePath.slice(prefixLength));
 }
 
 function searchWalk(

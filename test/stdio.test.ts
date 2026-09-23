@@ -171,6 +171,9 @@ describe('stdio server', () => {
       expect(audit.at(-1)).not.toContain('SECRET');
       expect(JSON.parse(audit[0] ?? '{}')).toMatchObject({ tool: 'search_text', ok: true });
       expect(JSON.parse(audit[0] ?? '{}').bytes_read).toBeGreaterThan(0);
+
+      const multiline = await session.client.callTool({ name: 'search_text', arguments: { query: 'a\nb' } });
+      expect((multiline as ToolText).isError).toBe(true);
     });
 
     it('rejects a depth above the configured maximum before running', async () => {

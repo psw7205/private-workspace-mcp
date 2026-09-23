@@ -17,6 +17,8 @@ export interface WriteFileParams {
   content: string;
   /** Required when the file exists; must be omitted to create a new file. */
   expectedRevision?: string;
+  /** Report FILE_NOT_FOUND instead of offering to create a missing file (edit_file). */
+  mustExist?: boolean;
 }
 
 export interface WriteFileResult {
@@ -55,6 +57,10 @@ export async function writeTextFile(
   if (options.mode !== 'read-write') {
     throw new WorkspaceError('READ_ONLY', 'the workspace is read-only; the operator must enable read-write mode');
   }
+  // Buffer.from would silently encode a lone surrogate as U+FFFD.
+  if (!params.content.isWellFormed()) {
+    throw new WorkspaceError('BINARY_FILE', 'content is not well-formed Unicode text (it contains a lone surrogate)');
+  }
   const bytes = Buffer.from(params.content, 'utf8');
   if (bytes.length > options.maxWriteBytes) {
     throw new WorkspaceError(
@@ -83,6 +89,8 @@ export async function writeTextFile(
         throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} changed since it was read; read it again and retry`);
       }
       existingMode = current.mode;
+    } else if (params.mustExist) {
+      throw new WorkspaceError('FILE_NOT_FOUND', `${relativePath} does not exist`);
     } else if (params.expectedRevision !== undefined) {
       throw new WorkspaceError(
         'REVISION_CONFLICT',
