@@ -81,7 +81,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 운영 영향은 다음과 같다.
 
 - OpenAI 경로만 쓰면 child는 modern으로 pin되고 정상 동작한다.
-- legacy client(예: 기본 설정의 MCP Inspector)가 같은 tunnel-client의 child에 **먼저** 붙으면 child가 legacy로 pin되어 이후 OpenAI 요청이 실패한다. 이때는 `tunnel-client`를 재시작하면 복구된다.
+- 2025-era(legacy) client가 같은 tunnel-client의 child에 **먼저** 붙으면 child가 legacy로 pin되어 이후 OpenAI 요청이 실패한다. 이때는 `tunnel-client`를 재시작하면 복구된다.
 - `legacy: 'reject'`(modern 전용)는 OpenAI 경로를 항상 보장하지만, ChatGPT UI connector의 era를 아직 검증하지 못해 채택하지 않았다. ChatGPT도 같은 connector 인프라(`openai-mcp-discover`)를 쓸 가능성이 높다는 것은 추정이다.
 - era routing(message 단위 분류)은 ChatGPT가 legacy를 쓰는 것으로 확인될 때 별도 결정으로 다룬다.
 
