@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -40,6 +40,12 @@ async function connect(env: Record<string, string>, versionNegotiation?: ClientO
   await client.connect(transport);
   return { client, stderr: () => stderr };
 }
+
+const stopCases: Array<[string, (child: ChildProcess) => void]> = [
+  ['stdin closes', (child) => void child.stdin?.end()],
+];
+// Windows has no POSIX signals: kill() terminates the process without running handlers.
+if (process.platform !== 'win32') stopCases.push(['SIGTERM arrives', (child) => void child.kill('SIGTERM')]);
 
 describe('stdio server', () => {
   let fixture: Fixture;
@@ -203,10 +209,7 @@ describe('stdio server', () => {
     expect(stdout).toBe('');
   });
 
-  it.each([
-    ['stdin closes', (child: ReturnType<typeof spawn>) => child.stdin?.end()],
-    ['SIGTERM arrives', (child: ReturnType<typeof spawn>) => child.kill('SIGTERM')],
-  ])('exits cleanly when %s', async (_label, stop) => {
+  it.each(stopCases)('exits cleanly when %s', async (_label, stop) => {
     const child = spawn(process.execPath, serverArgs, {
       cwd: projectRoot,
       env: { ...getDefaultEnvironment(), WORKSPACE_ROOT: fixture.root },

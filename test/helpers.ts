@@ -41,10 +41,11 @@ export async function createFixture(): Promise<Fixture> {
   await writeFile(path.join(outsideRaw, 'secret.txt'), 'outside secret\n');
 
   await symlink('src/index.ts', path.join(root, 'link-inside-file'));
-  await symlink('src', path.join(root, 'link-inside-dir'));
+  // Directory links need an explicit type on Windows; POSIX ignores it.
+  await symlink('src', path.join(root, 'link-inside-dir'), 'dir');
   await symlink(path.join(outsideRaw, 'secret.txt'), path.join(root, 'link-outside-file'));
-  await symlink(outsideRaw, path.join(root, 'link-outside-dir'));
-  await symlink('..', path.join(root, 'link-parent'));
+  await symlink(outsideRaw, path.join(root, 'link-outside-dir'), 'dir');
+  await symlink('..', path.join(root, 'link-parent'), 'dir');
   await symlink('.env', path.join(root, 'link-to-env'));
   await symlink(path.join(outsideRaw, 'missing'), path.join(root, 'link-dangling'));
 

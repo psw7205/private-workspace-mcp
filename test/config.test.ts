@@ -16,7 +16,7 @@ describe('loadConfig', () => {
     workspace = path.join(base, 'my-project');
     await mkdir(workspace);
     await writeFile(path.join(base, 'file.txt'), 'x');
-    await symlink(workspace, path.join(base, 'workspace-link'));
+    await symlink(workspace, path.join(base, 'workspace-link'), 'dir');
   });
 
   afterAll(async () => {

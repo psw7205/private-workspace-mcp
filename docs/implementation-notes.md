@@ -59,7 +59,7 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 - **TOCTOU**: 경로 검증과 실제 open 사이에 로컬 프로세스가 중간 directory를 symlink로 바꾸면 우회할 수 있다. Node에는 `openat2(RESOLVE_BENEATH)`가 없다. 마지막 component는 `O_NOFOLLOW`로 open해 줄이지만, 최종 경계는 ADR 11대로 OS 권한이다.
 - **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
 - **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
-- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 검증하지 않았다.
+- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 첫 push부터 test suite를 실행한다.
 - **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
 
 ## 4. 알려진 제약: stdio connection의 protocol era pin
@@ -104,9 +104,10 @@ unresolved: ChatGPT UI connector의 protocol era. connector 생성에는 사용�
 
 ## 6. 검증 결과
 
-- `pnpm test`: unit과 stdio integration을 합쳐 8 files, 182 tests 통과. 커버 범위는 path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary, 크기 제한, read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
+- `pnpm test`: unit과 stdio integration을 합쳐 9 files, 212 tests 통과. 커버 범위는 audit 파일 출력과 rotation, 추가 deny pattern, path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary, 크기 제한, read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
 - `pnpm e2e:tunnel`: `tunnel-client` 0.0.14 `dev proxy --mcp-command` 경유로 tools/list, 4개 tool 호출, revision conflict, escape/deny 거부, audit이 `tunnel-client` 로그에 기록되는지 확인. `tunnel-client` SIGTERM과 SIGKILL 양쪽에서 MCP child 종료
 - hosted: `tunnel-client doctor` `RESULT ok`. `tunnel-client run`은 runtime key로 hosted control plane polling을 시작했고 `/healthz` live, `/readyz` ready. Responses API(`type: mcp`, `tunnel_id`) 호출 시 OpenAI → tunnel-service → `tunnel-client` → stdio child로 `server/discover`, `tools/list`가 전달되어 성공 응답했다(stdio tap으로 확인). model 추론은 API 계정 credit 부족(`429 credit_balance_exhausted`)으로 실패해 hosted `tools/call`은 확인하지 못했다. 종료 시 child 정리도 확인
+- Linux: Docker `node:24-bookworm`(aarch64, Node 24.21)에서 clean install 후 typecheck, test(212), build 통과. root와 non-root(`node`) 사용자 모두 확인
 - 미검증: ChatGPT UI connector 경로(PRD 15-1)와 hosted `tools/call`. 원인은 각각 ChatGPT 로그인 필요, API credit 부족
 
 ## 7. Future TODO
@@ -114,4 +115,4 @@ unresolved: ChatGPT UI connector의 protocol era. connector 생성에는 사용�
 PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은 구현하지 않았다. MVP 구현 중 추가로 나온 항목은 다음과 같다.
 
 - ChatGPT UI connector로 검증하고 era 확인(4절). API credit을 충전한 뒤 hosted `tools/call` 확인
-- Windows 실환경 검증 (junction, 8.3 name, NTFS 대소문자)
+- CI(`ubuntu`/`macos`/`windows` matrix) 첫 실행 결과 확인. 특히 Windows job (remote 미설정으로 아직 실행되지 않음)
