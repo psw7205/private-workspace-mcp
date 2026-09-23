@@ -1,0 +1,109 @@
+# Implementation Notes — MVP
+
+PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않았거나 서로 긴장 관계에 있는 항목을 어떻게 닫았는지 기록한다. 원칙은 "문서 범위를 넘기지 않고, 가장 단순하고 보수적인 선택"이다.
+
+## 1. PRD / ADR 검토 결과
+
+### 1.1 모순 또는 긴장
+
+| # | 항목 | 문서 내용 | 결정 |
+|---|------|-----------|------|
+| C1 | 대용량 파일 | PRD 6.2 "대용량 파일은 pagination/range로 읽는다" vs PRD 10·15-8 "대용량 read는 limit에서 차단" | 파일 크기가 `max read bytes`를 넘으면 `FILE_TOO_LARGE`. 그 이하 파일은 line 단위 pagination(`start_line`, `max_lines`, 1-based) |
+| C2 | revision 요구 수준 | PRD 7 "가능하면 revision 요구" vs PRD 15-9 "stale revision write는 실패" | 기존 파일 덮어쓰기는 `expected_revision` **필수**. 대상이 없으면 `expected_revision`을 생략해야 하며 create-only로 동작 |
+| C3 | read-only 모드의 `write_file` | PRD 7 MVP tool 목록 vs PRD 13 `READ_ONLY` error | tool은 항상 등록하고, read-only 모드에서는 `READ_ONLY`를 반환 |
+
+### 1.2 누락 (문서에 결정 없음)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M1 | revision 범위 | 항상 **파일 전체 bytes**의 SHA-256 (`sha256:<hex>`). line window만 읽어도 동일 | window 단위 revision이면 paginated read 후 write가 불가능 |
+| M2 | deny pattern 매칭 의미 | 모든 path segment에 basename glob(`*`만 지원)을 **case-insensitive**로 적용. 입력 경로와 canonical(realpath) 경로 둘 다 검사 | macOS/Windows case-insensitive FS에서 `.ENV` 우회, workspace 내부 symlink(`foo -> .env`) 우회 방지 |
+| M3 | deny 목록 | PRD 9 예시 + `.git`. 운영자는 `WORKSPACE_EXTRA_DENY_PATTERNS`로 추가만 할 수 있고 기본 목록은 제거할 수 없음 | `.git/hooks` 쓰기는 사용자의 다음 git 명령에서 코드 실행으로 이어지고, `.git/config`에는 credential이 들어 있을 수 있음. Git은 Phase 4 typed tool로 다룬다 |
+| M4 | listing에서 deny 항목 | 결과에서 생략 | 민감 파일 존재 여부도 노출하지 않음 |
+| M5 | binary 판정 | 앞 8 KiB에 NUL byte가 있으면 `BINARY_FILE` | 단순하고 흔한 heuristic |
+| M6 | 새 파일의 parent directory | 없는 parent는 생성. 가장 가까운 기존 ancestor를 canonicalize해 containment를 확인한 뒤, 누락된 segment만 하나씩 `mkdir`하고 다시 realpath로 재확인 | PRD 6.4(`docs/architecture.md` 생성)와 PRD 8.3("가장 가까운 기존 parent를 canonicalize")이 누락 parent를 전제함. MVP에는 별도 mkdir tool이 없음 |
+| M7 | symlink에 쓰기 | 대상 경로의 마지막 component가 symlink면 거부(`INVALID_PATH`) | atomic rename은 link 자체를 교체하므로 의미가 모호함. 가장 보수적인 선택 |
+| M8 | symlink 탐색 | listing은 symlink를 따라가지 않고 `type: symlink`로만 표시. read는 realpath가 workspace 내부이고 deny에 걸리지 않을 때만 허용 | PRD 8.3 symlink escape 방어 |
+| M9 | 특수 파일(FIFO/socket/device) | read는 `NOT_A_FILE`. listing에서는 생략 | FIFO read는 무기한 block될 수 있음 |
+| M10 | audit log 출력 위치 | 기본은 stderr에 JSON Lines. `WORKSPACE_AUDIT_LOG`가 있으면 파일에 append하고 size 기준으로 `.1` backup 1개만 유지. 파일은 workspace 밖에 있어야 하고 symlink면 startup 거부. 쓰기 실패 시 stderr로 fallback | stdout은 MCP protocol channel. workspace 안에 두면 agent가 `read_file`/`write_file`로 audit을 읽거나 조작할 수 있음 |
+| M11 | 설정 방식 | env만 사용. 잘못된 값이면 startup 실패(fail closed) | PRD 8.1 예시가 `WORKSPACE_ROOT=` |
+| M12 | 경로 문법 | `..` segment는 위치와 무관하게 거부. `\`, drive letter, UNC, NUL/control 문자, Windows reserved name, `:` `<>"\|?*`, `.`/공백으로 끝나는 segment는 **모든 OS에서** 거부 | Windows에서 `.env.` → `.env`, `.env::$DATA` 같은 alias로 deny를 우회하는 경로를 플랫폼과 무관하게 차단 |
+| M13 | request timeout | tool handler 전체에 timeout을 걸고 `TIMEOUT`을 반환. 이미 시작된 fs 작업은 취소되지 않으므로 write timeout 메시지에 "재조회로 결과 확인"을 명시 | Node fs 작업은 취소 불가 |
+| M14 | 동시 write | 같은 canonical path에 대한 write는 process 내 lock으로 직렬화 | tunnel-client 기본 동시 요청 수가 10이므로 agent 요청끼리의 revision race를 막음 |
+| M15 | 새 파일 create-only 보장 | temp file을 쓴 뒤 `link(tmp, target)`. target이 이미 있으면 `EEXIST` → `REVISION_CONFLICT` | check와 create 사이의 race를 제거 |
+| M16 | 기존 파일 mode | overwrite 시 기존 file mode를 temp file에 복사 | rename으로 inode가 바뀌면서 실행 비트 등이 사라지는 것을 방지 |
+
+### 1.3 구조 조정
+
+- ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
+- ADR 7에 없는 `filesystem/directory-lister.ts`와 `tools/run-tool.ts`(timeout, error 변환, audit을 담당하는 공통 wrapper)를 추가한다.
+
+## 2. 설정
+
+| env | 기본값 | 설명 |
+|-----|--------|------|
+| `WORKSPACE_ROOT` | (필수) | 절대 경로. 존재하는 directory여야 하며 startup 시 realpath로 고정 |
+| `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write` |
+| `WORKSPACE_NAME` | root basename | `get_workspace_info`에 노출되는 이름 |
+| `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이 크기를 넘는 파일은 read 거부 |
+| `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | UTF-8 기준 write content 최대 크기 |
+| `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 1회 응답의 최대 entry 수 |
+| `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
+| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout |
+| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. workspace 밖이어야 하며 symlink는 거부. 권한 `0600` |
+| `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
+| `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
+
+## 3. 잔여 위험 (MVP에서 수용)
+
+- **TOCTOU**: 경로 검증과 실제 open 사이에 로컬 프로세스가 중간 directory를 symlink로 바꾸면 우회할 수 있다. Node에는 `openat2(RESOLVE_BENEATH)`가 없다. 마지막 component는 `O_NOFOLLOW`로 open해 줄이지만, 최종 경계는 ADR 11대로 OS 권한이다.
+- **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
+- **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
+- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 검증하지 않았다.
+- **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
+
+## 4. 알려진 제약: stdio connection의 protocol era pin
+
+MCP TypeScript SDK v2의 `serveStdio`는 첫 opening 요청으로 connection의 era(2025 `initialize` 또는 `2026-07-28` stateless)를 정하고, 그 connection 동안 instance 하나를 유지한다. `tunnel-client`는 모든 caller를 stdio child 하나로 multiplex하므로 era가 섞이면 실패한다. `tunnel-client dev proxy`로 확인한 결과는 다음과 같다.
+
+| 같은 child에서의 요청 순서 | 결과 |
+|---------------------------|------|
+| modern → modern | 둘 다 성공 |
+| legacy → legacy | 둘 다 성공 |
+| legacy → modern | modern 실패: `server/discover` 미제공 |
+| modern → legacy | legacy 실패: `Unsupported protocol version: 2025-11-25` |
+
+SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션이 없다. MVP는 SDK 기본 posture를 유지한다.
+
+실사용 영향은 작을 것으로 본다. tunnel-client `docs/protocol.md`에 따르면 stdio 기반 `main` channel은 `X-Tunnel-MCP-Server-Info`에 `proc_affinity`만 선언한다. `2026-07-28` self-contained 요청을 받는다는 `stateless` 선언은 내장 `harpoon` channel만 한다. `docs/connectors.md`도 runtime 트래픽을 `main` endpoint의 `initialize`, `tools/list`, tool call로 설명한다. 따라서 ChatGPT → stdio child 트래픽은 legacy era 하나로 예상된다. 섞여 들어오는 경우가 확인되면 message 단위 era routing을 별도 결정(ADR-009 HTTP transport 검토와 함께)으로 다룬다.
+
+unresolved: hosted 경로에서의 실제 era 확인. runtime API key와 tunnel ID가 없어 검증하지 못했다. 위 문서 근거상 legacy로 예상된다.
+
+## 5. 구현 계획
+
+```text
+0. git init, baseline commit                  -> verify: git log
+1. scaffold (pnpm, tsconfig, vitest)          -> verify: pnpm typecheck, pnpm test
+2. security test 정의 (path-guard, deny, reader, writer, lister)
+                                              -> verify: 구현 전 red 확인
+3. errors / config / deny-list / path-guard   -> verify: 해당 test green
+4. revision / file-reader / directory-lister  -> verify: 해당 test green
+5. file-writer                                -> verify: 해당 test green
+6. tools + run-tool + audit + server + stdio entry
+                                              -> verify: stdio integration test (spawn, tools/list, call, stdin EOF 시 종료)
+7. tunnel-client dev proxy --mcp-command로 e2e -> verify: MCP client가 tunnel 경유로 tools/list, tools/call 성공, tunnel-client 종료 시 child 종료
+8. README, 결과 정리                           -> verify: 문서에 로컬 절대 경로 없음
+```
+
+## 6. 검증 결과
+
+- `pnpm test`: unit과 stdio integration을 합쳐 8 files, 182 tests 통과. 커버 범위는 path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary, 크기 제한, read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
+- `pnpm e2e:tunnel`: `tunnel-client` 0.0.14 `dev proxy --mcp-command` 경유로 tools/list, 4개 tool 호출, revision conflict, escape/deny 거부, audit이 `tunnel-client` 로그에 기록되는지 확인. `tunnel-client` SIGTERM과 SIGKILL 양쪽에서 MCP child 종료
+- 미검증: ChatGPT에서 hosted Secure MCP Tunnel로 tool catalog 조회(PRD 15-1). 위 unresolved 항목과 같은 이유
+
+## 7. Future TODO
+
+PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은 구현하지 않았다. MVP 구현 중 추가로 나온 항목은 다음과 같다.
+
+- hosted Secure MCP Tunnel + ChatGPT connector로 실제 검증하고, 사용 era 확인(4절, legacy 예상)
+- Windows 실환경 검증 (junction, 8.3 name, NTFS 대소문자)

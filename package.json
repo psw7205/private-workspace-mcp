@@ -1,0 +1,35 @@
+{
+  "name": "private-workspace-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workspace-confined filesystem MCP server for OpenAI Secure MCP Tunnel (stdio)",
+  "type": "module",
+  "bin": {
+    "private-workspace-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "e2e:tunnel": "pnpm build && node --import tsx scripts/e2e-tunnel-client.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/node": "^24.13.6",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11"
+  }
+}
