@@ -152,6 +152,13 @@ describe('PathGuard', () => {
 
     it('reports a file used as a directory as NOT_A_DIRECTORY', async () => {
       await expectWorkspaceError(guard.resolveExisting('README.md/x'), 'NOT_A_DIRECTORY');
+      await expectWorkspaceError(guard.resolveExisting('README.md/x/y'), 'NOT_A_DIRECTORY');
+      await expectWorkspaceError(guard.resolveExisting('link-inside-file/x'), 'NOT_A_DIRECTORY');
+    });
+
+    it('reports a missing path under directories as FILE_NOT_FOUND', async () => {
+      await expectWorkspaceError(guard.resolveExisting('src/missing/x'), 'FILE_NOT_FOUND');
+      await expectWorkspaceError(guard.resolveExisting('missing/x'), 'FILE_NOT_FOUND');
     });
 
     it('never puts host paths in error messages', async () => {

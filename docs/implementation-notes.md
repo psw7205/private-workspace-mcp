@@ -56,6 +56,12 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 | M26 | deny 목록 확장 | `secrets*`를 `secret*`로 넓히고 `.git-credentials`, `service-account*.json`, `id_rsa*`, `id_ed25519*`, `*.tfstate`, `*.tfstate.*`, `.kube`, `kubeconfig*`, `.docker`, `.pypirc`, `*.p12`, `*.pfx`를 추가. PRD 9 원문 목록은 고치지 않음 | `secrets*`는 `secret.yaml`을 놓쳤고, 나머지는 `.ssh`·`.aws` 밖에 흔히 놓이는 credential. `secretary.md` 같은 오탐은 read 거부로 끝나지만 누락은 되돌릴 수 없음. deny는 여전히 보조 방어(PRD 9) |
 | M27 | 넓은 root 거부 | canonical root가 filesystem root이거나 canonical home을 포함하면(home 자신과 그 상위) startup 실패. home을 알 수 없으면(`HOME` 미설정 + passwd entry 없는 uid) home 검사만 건너뜀 | root가 사실상 sandbox 경계. `$HOME`이면 deny에 없는 home 아래 모든 파일이 노출됨. 전용 uid로 container를 띄우는 구성(README)이 막히지 않게 home 조회 실패는 허용 |
 
+### 1.2.3 CI 후속 결정 (2026-09-23)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M28 | 파일을 디렉터리로 쓴 경로 | `resolveExisting`에서 `realpath`가 `ENOENT`면 가장 가까운 존재하는 상위 경로를 `stat`하고, directory가 아니면 `NOT_A_DIRECTORY`. 상위를 `stat`할 수 없으면 원래 `FILE_NOT_FOUND` | `README.md/x`에 POSIX는 `ENOTDIR`, Windows는 `ENOENT`를 줘서 첫 Windows CI job에서 오류 code가 갈렸다. 거부 여부는 같고 code만 OS와 무관하게 맞춘다. symlink 상위는 POSIX `realpath`처럼 따라가서 판정한다 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -86,7 +92,7 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 - **TOCTOU**: 경로 검증과 실제 open 사이에 로컬 프로세스가 중간 directory를 symlink로 바꾸면 우회할 수 있다. Node에는 `openat2(RESOLVE_BENEATH)`가 없다. 마지막 component는 `O_NOFOLLOW`로 open해 줄이지만, 최종 경계는 ADR 11대로 OS 권한이다.
 - **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
 - **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
-- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 첫 push부터 test suite를 실행한다.
+- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 test suite를 실행한다. 첫 실행에서 오류 code 차이 1건이 나와 M28로 고쳤다.
 - **prompt injection을 통한 write**: read-write 모드에서 model이 읽은 파일에 심어진 지시가 `write_file`·`edit_file` 호출로 이어질 수 있다. revision은 model도 `read_file`로 얻으므로 방어가 아니다. 서버는 read-only 기본값과 `destructiveHint`만 제공하고, 승인은 client 설정(README)에 맡긴다. 피해 복구 수단(revision history, rollback)은 PRD Phase 2 범위다.
 - **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
 
@@ -148,4 +154,4 @@ PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은
 - 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
 - README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
-- CI(`ubuntu`/`macos`/`windows` matrix) 첫 실행 결과 확인. 특히 Windows job (remote 미설정으로 아직 실행되지 않음)
+- M28 반영 후 CI Windows job 재실행 결과 확인. 첫 실행(2026-09-23)은 ubuntu·macOS 통과, Windows는 `NOT_A_DIRECTORY` test 1건 실패(M28)

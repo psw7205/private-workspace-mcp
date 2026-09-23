@@ -90,6 +90,7 @@ export class PathGuard {
     try {
       absolutePath = await realpath(this.toAbsolute(relativePath));
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') await this.assertParentsAreDirectories(relativePath);
       throw fromFsError(error, relativePath);
     }
     this.assertAllowed(absolutePath, relativePath);
@@ -171,6 +172,22 @@ export class PathGuard {
       throw new WorkspaceError('PATH_OUTSIDE_WORKSPACE', `${relativePath} resolves outside the workspace`);
     }
     return inside;
+  }
+
+  /**
+   * Windows reports ENOENT where POSIX reports ENOTDIR for `file/child` (M28), so the
+   * nearest existing parent decides between FILE_NOT_FOUND and NOT_A_DIRECTORY.
+   */
+  private async assertParentsAreDirectories(relativePath: string): Promise<void> {
+    const parents = relativePath.split('/').slice(0, -1);
+    for (let count = parents.length; count > 0; count--) {
+      const info = await stat(this.toAbsolute(parents.slice(0, count).join('/'))).catch(() => undefined);
+      if (info === undefined) continue;
+      if (!info.isDirectory()) {
+        throw new WorkspaceError('NOT_A_DIRECTORY', `a parent of ${relativePath} is not a directory`);
+      }
+      return;
+    }
   }
 
   private checkRelative(input: string): string {
