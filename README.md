@@ -16,13 +16,14 @@ OpenAI Secure MCP Tunnel ◀── outbound HTTPS ── tunnel-client
 
 - 요구사항과 설계: [`docs/prd.md`](docs/prd.md), [`docs/adr.md`](docs/adr.md)
 - 문서에 없던 결정, 잔여 위험, 검증 결과, TODO: [`docs/implementation-notes.md`](docs/implementation-notes.md)
+- 바뀐 결정 찾기: PRD·ADR 원문은 두고 해당 절에 `Amendment (날짜)`를 덧붙인다(`grep -n "Amendment (" docs/*.md`). 새 결정은 `docs/adr-NNN-*.md`, 세부 결정은 implementation notes의 M 표, 변경 이유는 `git log -- docs/`
 - agent 작업 규칙: [`AGENTS.md`](AGENTS.md)
 
 ## Quick start
 
 ```sh
 mise install          # Node 26, pnpm (mise.toml)
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 WORKSPACE_ROOT="$PWD" node dist/index.js   # stdio로 대기. 기본 read-only
 ```
@@ -97,18 +98,35 @@ read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(pro
 
 `tunnel-client`는 Homebrew(`brew install openai/tools/tunnel-client`)로 설치한다. child는 `tunnel-client`의 환경 변수를 상속하고, child의 stderr는 `tunnel-client` 로그로 전달된다(`tunnel-client` 0.0.14에서 확인). 서버 설정은 command에 명시하고, runtime key는 child에 넘기지 않는다.
 
+tunnel ID(Platform > Tunnels)와 runtime API key(admin key 아님)는 `.env`에 둔다. `.env`는 git에 올라가지 않는다.
+
+```sh
+cp .env.example .env    # TUNNEL_ID, API_KEY 입력
+```
+
+profile은 한 번만 만든다. profile은 `~/.config/tunnel-client/`에 머신별로 저장되고 절대 경로가 들어가므로 git으로 옮겨지지 않는다.
+
 ```sh
 pnpm build
-
-export CONTROL_PLANE_TUNNEL_ID="tunnel_..."   # Platform > Tunnels
-export CONTROL_PLANE_API_KEY="sk-..."          # Runtime API key (admin key 아님)
-
+set -a && . ./.env && set +a
 tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
-  --tunnel-id "$CONTROL_PLANE_TUNNEL_ID" \
-  --mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY WORKSPACE_ROOT=/workspace/project WORKSPACE_MODE=read-write node $(pwd)/dist/index.js"
-tunnel-client doctor --profile workspace-mcp --explain
-tunnel-client run --profile workspace-mcp
+  --tunnel-id "$TUNNEL_ID" \
+  --mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY WORKSPACE_ROOT=<project> WORKSPACE_MODE=read-write WORKSPACE_AUDIT_LOG=<audit-dir>/audit.jsonl $(mise which node) $(pwd)/dist/index.js"
 ```
+
+- `<project>`는 agent 전용 directory의 절대 경로다(filesystem root와 home은 거부됨). `<audit-dir>`는 workspace 밖의 기존 directory다. 빼면 audit은 `tunnel-client` 로그로 간다.
+- node는 `$(mise which node)`로 절대 경로를 넣는다. `tunnel-client`를 띄우는 shell에 mise가 활성화돼 있지 않으면 PATH의 `node`가 Node 26이 아닐 수 있다. 경로와 mode를 바꾸려면 `tunnel-client profiles edit workspace-mcp`로 고친다.
+
+실행할 때마다 `.env` 값을 `CONTROL_PLANE_*`로 넘긴다. subshell에서 원래 이름을 지우므로 child에는 key가 전달되지 않는다.
+
+```sh
+( set -a && . ./.env && set +a
+  export CONTROL_PLANE_TUNNEL_ID="$TUNNEL_ID" CONTROL_PLANE_API_KEY="$API_KEY"
+  unset TUNNEL_ID API_KEY
+  tunnel-client doctor --profile workspace-mcp --explain && exec tunnel-client run --profile workspace-mcp )
+```
+
+`run`이 떠 있는 동안에만 ChatGPT가 tool을 호출할 수 있다. 상태는 `http://127.0.0.1:8080/ui`와 `/readyz`로 본다.
 
 OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. container에는 workspace와 audit log directory만 mount되므로 PathGuard에 결함이 있어도 host의 다른 파일에 닿지 않는다. `-i`는 필수이고 `-t`는 쓰지 않는다(stdout이 MCP channel).
 
@@ -128,11 +146,18 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 3. 인증은 **인증 없음(No authentication)**을 고른다. 이 서버는 OAuth를 구현하지 않으므로 OAuth를 고르면 "does not implement OAuth" 오류가 난다. 접근 통제는 OpenAI의 tunnel 권한이 맡는다(ADR 17 Amendment).
 4. tool 7개가 발견되는지 확인한다.
 
+connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다. 새 버전에서 tool 목록, description, schema가 바뀌었으면 다음 순서로 반영한다. 내부 동작만 바뀌었으면 1까지만 한다.
+
+1. `pnpm build` 후 daemon을 다시 띄운다(profile은 `dist/index.js`를 실행한다).
+2. https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른다.
+3. 새 대화를 시작한다. 기존 대화에는 이전 tool 목록이 남을 수 있다.
+
 Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
 
 주의:
 
 - tunnel ID 하나에는 `tunnel-client` instance 하나만 실행한다. stdio child가 instance마다 따로 뜨기 때문이다.
+- 여러 머신에서 쓸 때는 머신마다 tunnel과 connector를 따로 만든다. 같은 tunnel을 여러 머신에서 쓰려면 한 번에 한 머신에서만 daemon을 띄운다. 이때 connector는 그대로 쓸 수 있지만, 연결되는 workspace는 그 머신 profile의 `WORKSPACE_ROOT`다.
 - MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 tunnel-client에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로, 그럴 때는 `tunnel-client`를 재시작한다(implementation notes 4절).
 
 ## 개발과 검증
@@ -155,7 +180,7 @@ src/
   index.ts                 stdio entry: config 로드, serveStdio, 종료 처리
   server/server.ts         McpServer factory와 tool 등록
   tools/                   tool 정의(schema, annotation)와 공통 runTool(timeout, error 변환, audit)
-  filesystem/              PathGuard, reader, lister, writer, revision
+  filesystem/              PathGuard, reader, lister, writer, editor, 검색(walker, glob, ignore 파일), revision
   policy/deny-list.ts      민감 파일 deny pattern
   config/config.ts         env 파싱과 검증
   audit/audit-log.ts       stderr/file audit sink

@@ -4,10 +4,11 @@
 
 ## 먼저 읽을 것
 
-- `docs/prd.md`, `docs/adr.md`: 범위와 아키텍처 결정. MVP 범위를 넘는 기능은 추가하지 않는다.
+- `docs/prd.md`, `docs/adr.md`: 범위와 아키텍처 결정의 출발점. 고도화하며 필요하면 Amendment나 새 ADR로 바꾼다.
 - `docs/implementation-notes.md`: 문서에 없던 결정(C/M 번호), 잔여 위험, 알려진 제약, 검증 결과, TODO.
 - 문서에서 결정되지 않은 중요한 사항은 임의로 확장하지 말고 가장 단순하고 보수적인 쪽을 택한다. 택한 결정은 `docs/implementation-notes.md`에 기록한다.
 - ADR 원문은 고치지 않는다. 결정이 바뀌면 해당 절에 `Amendment (날짜)`를 추가한다.
+- implementation notes의 M 항목도 덮어쓰지 않는다. 결정이 바뀌면 새 M 항목을 추가하고 원래 항목에 `(이후 Mxx로 대체)`를 표시한다.
 
 ## 명령
 
