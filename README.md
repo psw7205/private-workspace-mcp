@@ -64,10 +64,10 @@ tunnel-client doctor --profile workspace-mcp --explain
 tunnel-client run --profile workspace-mcp
 ```
 
-`run`이 healthy인 동안 ChatGPT Settings > Connectors에서 connector를 만들거나 확인한다.
+`run`이 healthy인 동안 ChatGPT Settings > Connectors에서 connector를 만들거나 확인한다. Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
 
 주의:
 
 - tunnel ID 하나에는 `tunnel-client` instance 하나만 실행한다. stdio child가 instance마다 따로 뜨기 때문이다(tunnel-client stdio deployment limit).
-- MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. `tunnel-client`는 stdio `main` channel을 `stateless`로 선언하지 않으므로 ChatGPT 트래픽은 legacy `initialize` era 하나로 예상된다. 근거와 제약은 implementation notes 4절을 참고한다.
+- MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 tunnel-client에 legacy client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로, 그럴 때는 `tunnel-client`를 재시작한다. 자세한 내용은 implementation notes 4절을 참고한다.
 - workspace path를 검증하는 것은 defense-in-depth일 뿐이다. 실제 보안 경계는 전용 OS 사용자나 container 같은 OS 권한이다(ADR-001 §11).

@@ -75,9 +75,16 @@ MCP TypeScript SDK v2의 `serveStdio`는 첫 opening 요청으로 connection의 
 
 SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션이 없다. MVP는 SDK 기본 posture를 유지한다.
 
-실사용 영향은 작을 것으로 본다. tunnel-client `docs/protocol.md`에 따르면 stdio 기반 `main` channel은 `X-Tunnel-MCP-Server-Info`에 `proc_affinity`만 선언한다. `2026-07-28` self-contained 요청을 받는다는 `stateless` 선언은 내장 `harpoon` channel만 한다. `docs/connectors.md`도 runtime 트래픽을 `main` endpoint의 `initialize`, `tools/list`, tool call로 설명한다. 따라서 ChatGPT → stdio child 트래픽은 legacy era 하나로 예상된다. 섞여 들어오는 경우가 확인되면 message 단위 era routing을 별도 결정(ADR-009 HTTP transport 검토와 함께)으로 다룬다.
+**hosted 관측 결과 (2026-09-23, `tunnel-client` 0.0.14):** Responses API의 `{"type":"mcp","tunnel_id":…}` 도구로 요청했을 때, OpenAI tunnel-service가 stdio child에 보낸 요청은 `2026-07-28` self-contained 형식이었다. 순서는 `server/discover`(id `openai-mcp-discover`) 다음 `tools/list`였고, 둘 다 `_meta`에 `io.modelcontextprotocol/protocolVersion`, `clientInfo`, `clientCapabilities`가 있었다. 서버는 두 요청에 모두 정상 응답했다. 이는 stdio `main` channel이 `stateless`를 선언하지 않는다는 tunnel-client 문서만 보고 legacy를 예상했던 앞선 판단과 다르다.
 
-unresolved: hosted 경로에서의 실제 era 확인. runtime API key와 tunnel ID가 없어 검증하지 못했다. 위 문서 근거상 legacy로 예상된다.
+운영 영향은 다음과 같다.
+
+- OpenAI 경로만 쓰면 child는 modern으로 pin되고 정상 동작한다.
+- legacy client(예: 기본 설정의 MCP Inspector)가 같은 tunnel-client의 child에 **먼저** 붙으면 child가 legacy로 pin되어 이후 OpenAI 요청이 실패한다. 이때는 `tunnel-client`를 재시작하면 복구된다.
+- `legacy: 'reject'`(modern 전용)는 OpenAI 경로를 항상 보장하지만, ChatGPT UI connector의 era를 아직 검증하지 못해 채택하지 않았다. ChatGPT도 같은 connector 인프라(`openai-mcp-discover`)를 쓸 가능성이 높다는 것은 추정이다.
+- era routing(message 단위 분류)은 ChatGPT가 legacy를 쓰는 것으로 확인될 때 별도 결정으로 다룬다.
+
+unresolved: ChatGPT UI connector의 protocol era. connector 생성에는 사용자 ChatGPT 로그인이 필요하다.
 
 ## 5. 구현 계획
 
@@ -99,11 +106,12 @@ unresolved: hosted 경로에서의 실제 era 확인. runtime API key와 tunnel 
 
 - `pnpm test`: unit과 stdio integration을 합쳐 8 files, 182 tests 통과. 커버 범위는 path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary, 크기 제한, read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
 - `pnpm e2e:tunnel`: `tunnel-client` 0.0.14 `dev proxy --mcp-command` 경유로 tools/list, 4개 tool 호출, revision conflict, escape/deny 거부, audit이 `tunnel-client` 로그에 기록되는지 확인. `tunnel-client` SIGTERM과 SIGKILL 양쪽에서 MCP child 종료
-- 미검증: ChatGPT에서 hosted Secure MCP Tunnel로 tool catalog 조회(PRD 15-1). 위 unresolved 항목과 같은 이유
+- hosted: `tunnel-client doctor` `RESULT ok`. `tunnel-client run`은 runtime key로 hosted control plane polling을 시작했고 `/healthz` live, `/readyz` ready. Responses API(`type: mcp`, `tunnel_id`) 호출 시 OpenAI → tunnel-service → `tunnel-client` → stdio child로 `server/discover`, `tools/list`가 전달되어 성공 응답했다(stdio tap으로 확인). model 추론은 API 계정 credit 부족(`429 credit_balance_exhausted`)으로 실패해 hosted `tools/call`은 확인하지 못했다. 종료 시 child 정리도 확인
+- 미검증: ChatGPT UI connector 경로(PRD 15-1)와 hosted `tools/call`. 원인은 각각 ChatGPT 로그인 필요, API credit 부족
 
 ## 7. Future TODO
 
 PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은 구현하지 않았다. MVP 구현 중 추가로 나온 항목은 다음과 같다.
 
-- hosted Secure MCP Tunnel + ChatGPT connector로 실제 검증하고, 사용 era 확인(4절, legacy 예상)
+- ChatGPT UI connector로 검증하고 era 확인(4절). API credit을 충전한 뒤 hosted `tools/call` 확인
 - Windows 실환경 검증 (junction, 8.3 name, NTFS 대소문자)
