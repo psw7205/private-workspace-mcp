@@ -556,6 +556,8 @@ INTERNAL_ERROR
 
 agent에게 host 내부 절대 경로나 secret 정보가 노출되지 않도록 한다.
 
+> **Amendment (2026-09-23):** `edit_file`(ADR-002)과 함께 `EDIT_NO_MATCH`, `EDIT_AMBIGUOUS`를 추가한다.
+
 ---
 
 # 14. OpenAI Secure MCP Tunnel Integration
@@ -636,6 +638,8 @@ MVP 범위와 분리해서 단계적으로 진행한다.
 
 특히 기존 파일 수정은 전체 `write_file`보다 targeted `edit_file`을 우선하도록 발전시킨다.
 
+> **Amendment (2026-09-23):** exact-match `edit_file`을 구현한다(ADR-002). 나머지 항목은 보류한다.
+
 ---
 
 ## Phase 3 — Better File Intelligence
@@ -652,6 +656,8 @@ MVP 범위와 분리해서 단계적으로 진행한다.
   * `.ignore`
 * file change watcher
 * diagnostics
+
+> **Amendment (2026-09-23):** recursive glob 검색(`find_files`), literal text 검색(`search_text`), `.gitignore`/`.ignore` 지원을 in-process로 구현한다. ripgrep 실행, regex, symbol 검색, language detection, watcher, diagnostics는 보류한다.
 
 ---
 

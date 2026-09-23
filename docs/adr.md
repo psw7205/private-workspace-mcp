@@ -248,6 +248,8 @@ process
 
 파괴적 operation을 줄여 initial attack surface를 최소화한다.
 
+> **Amendment (2026-09-23):** Phase 2와 3의 첫 tool로 `edit_file`(ADR-002), `find_files`, `search_text`를 추가한다. `find_files`와 `search_text`는 read-only이고 기존 filesystem 규칙(PathGuard, deny 양쪽 검사, symlink 미추적, 특수 파일·binary·non-UTF-8 제외)을 따른다. 검색은 in-process literal 검색만 한다. `rg` 같은 외부 process 실행은 15절에 따라 제외하고, client가 준 regex는 timeout으로 끊을 수 없는 동기 실행이라 제외한다. `.gitignore`와 `.ignore`를 순회에 적용한다. 세부 결정은 `docs/implementation-notes.md` M19~M24에 둔다. delete, move, rename 등 위 목록은 여전히 보류다.
+
 ---
 
 # 10. Path Security
@@ -596,6 +598,8 @@ TypeScript 공식 SDK가 안정적으로 제공되고 구현 규모도 작으므
 * ADR-008: multi-workspace policy
 * ADR-009: HTTP MCP transport
 * ADR-010: semantic code intelligence / LSP integration
+
+> **Amendment (2026-09-23):** ADR-002는 `docs/adr-002-edit-model.md`로 Accepted.
 
 ---
 

@@ -35,6 +35,17 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 | M17 | non-UTF-8 파일 | 유효한 UTF-8이 아니면 read를 `BINARY_FILE`로 거부(strict decode). 새 error code는 만들지 않음 | lossy decode는 잘못된 byte를 U+FFFD로 바꾸는데 revision은 원본 byte 기준이라, 읽은 content를 그대로 write하면 EUC-KR·latin1 파일이 조용히 손상됨. `ErrorCode`와 PRD 13 표를 바꾸지 않는 쪽을 택함 |
 | M18 | read limit을 넘는 기존 파일 overwrite | revision 계산 전에 `FILE_TOO_LARGE`로 거부. revision 계산은 `readRegularFile`을 재사용 | `read_file`이 이런 파일의 revision을 주지 않으므로 overwrite는 성공할 수 없다. 제한 없이 hash하면 임의 `expected_revision` 하나로 lock을 쥔 채 큰 IO를 일으킬 수 있음 |
 
+### 1.2.1 Phase 2·3 결정 (2026-09-23)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M19 | `edit_file` | exact-match 단일 교체. `expected_revision` 필수, 0개 match `EDIT_NO_MATCH`, 여러 match는 `replace_all` 없으면 `EDIT_AMBIGUOUS`. 읽기는 `read_file` 규칙, 쓰기는 `write_file` 교체 경로 재사용 | ADR-002 |
+| M20 | 검색 tool 범위 | `find_files`: glob을 기준 디렉터리 상대 경로에 `path.posix.matchesGlob`으로 적용(대소문자 구분, `*`는 `/`를 넘지 않음). `search_text`: literal 검색, `case_sensitive` 기본 false, 줄마다 첫 match 하나를 결과로. regex와 외부 process는 쓰지 않음 | 동기 regex는 `runTool` timeout으로 끊을 수 없어 catastrophic backtracking에 취약. process 실행은 ADR-001 15절 |
+| M21 | 검색 순회 규칙 | `list_directory`와 같다: symlink 미추적, deny는 입력·canonical 양쪽, 특수 파일 제외. `search_text`는 read limit 초과, binary(NUL), non-UTF-8 파일을 건너뛴다. depth 제한(`WORKSPACE_MAX_DEPTH`)은 적용하지 않음 | depth 3이면 recursive 검색이 의미 없음. 대신 M22 상한으로 작업량을 막음 |
+| M22 | 검색 작업량 상한 | 순회 중 만나는 regular file 수를 `WORKSPACE_MAX_SEARCH_FILES`(기본 10000)로 제한하고, 결과 수는 `limit`(최대 `WORKSPACE_MAX_DIRECTORY_ENTRIES`)으로 제한. 어느 쪽에 걸렸는지 `truncated`와 `scan_limit_reached`로 구분 | 결과가 적은 검색도 순회 비용은 클 수 있음 |
+| M23 | ignore 파일 | 순회하는 각 디렉터리의 `.gitignore`, `.ignore`를 `ignore` package로 적용. 규칙은 그 디렉터리 기준이고 상위 규칙도 함께 적용. ignore된 디렉터리는 들어가지 않으므로 그 아래 파일은 negation으로 되살릴 수 없음(git과 같음). `include_ignored: true`면 적용하지 않음. ignore 파일 자체는 regular file일 때만 `O_NOFOLLOW`로 읽고, read limit 초과·non-UTF-8이면 없는 것으로 취급. `list_directory`, `read_file`에는 적용하지 않음. global excludes와 `.git/info/exclude`는 읽지 않음(`.git`은 deny) | 검색 결과에서 `node_modules`, build 산출물 같은 소음을 뺌. ignore는 편의 기능이지 보안 경계가 아니므로 deny와 섞지 않음 |
+| M24 | timeout 후 작업 중단 | `runTool`이 timeout 때 `AbortSignal`을 abort하고 검색 순회는 파일마다 signal을 확인해 멈춤 | 이전에는 timeout 응답 뒤에도 순회가 끝까지 돌았음 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
