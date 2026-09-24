@@ -603,6 +603,8 @@ TypeScript 공식 SDK가 안정적으로 제공되고 구현 규모도 작으므
 
 > **Amendment (2026-09-24):** ADR-008은 `docs/adr-008-multi-workspace.md`로 Accepted. 8절의 "workspace는 서버 startup config에서 결정"은 유지하고, 설정된 workspace 중 하나를 tool 인자 `workspace`로 고른다.
 
+> **Amendment (2026-09-24):** ADR-004는 read-only Git tool 범위로 `docs/adr-004-git.md`에 Proposed로 초안을 둔다. write 계열은 그 ADR의 Deferred에 남는다.
+
 ---
 
 # 22. Final Architecture Principle
