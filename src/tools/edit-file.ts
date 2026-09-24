@@ -37,11 +37,11 @@ export function registerEditFile(server: McpServer, deps: ToolDeps): void {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ workspace, path, old_string, new_string, expected_revision, replace_all }, ctx) =>
-      runTool({ tool: 'edit_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
+      runTool({ tool: 'edit_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {
         const { guard, mode } = selectWorkspace(deps, workspace);
         const result = await editTextFile(
           guard,
-          { mode, maxReadBytes, maxWriteBytes },
+          { mode, maxReadBytes, maxWriteBytes, signal },
           { path, oldString: old_string, newString: new_string, expectedRevision: expected_revision, replaceAll: replace_all },
         );
         return { result: { ...result }, bytesWritten: result.bytes_written };

@@ -168,6 +168,30 @@ describe('editTextFile', () => {
     );
     expectNoHostPath(error.message, fixture);
   });
+
+  it('passes the signal to the write, so an aborted edit changes nothing (M43)', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const options = { ...readWrite, signal: controller.signal };
+    const revision = await revisionOf('README.md');
+    await expect(
+      editTextFile(guard, options, {
+        path: 'README.md',
+        oldString: 'readme',
+        newString: 'late',
+        expectedRevision: revision,
+        replaceAll: false,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      editTextFileMulti(guard, options, {
+        path: 'README.md',
+        edits: [{ oldString: 'readme', newString: 'late', replaceAll: false }],
+        expectedRevision: revision,
+      }),
+    ).rejects.toThrow();
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+  });
 });
 
 describe('editTextFileMulti', () => {

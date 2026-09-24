@@ -43,19 +43,20 @@ export async function runTool<T extends Record<string, unknown>>(
   };
   const elapsed = () => Math.round(performance.now() - startedAt);
 
-  // Operations that loop (searches) check the signal and stop after a timeout.
+  // Searches stop and writes skip their commit once the signal aborts (M24, M43).
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      // Node.js cannot cancel filesystem calls already in flight.
-      controller.abort();
+      // Reject before aborting: an operation that rejects synchronously on abort must not win the race.
       reject(
         new WorkspaceError(
           'TIMEOUT',
           `${options.tool} did not finish within ${options.timeoutMs} ms; it may still complete, so check the current state before retrying`,
         ),
       );
+      // Node.js cannot cancel filesystem calls already in flight.
+      controller.abort();
     }, options.timeoutMs);
   });
 

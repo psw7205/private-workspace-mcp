@@ -44,7 +44,7 @@ PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않
 | M21 | 검색 순회 규칙 | `list_directory`와 같다: symlink 미추적, deny는 입력·canonical 양쪽, 특수 파일 제외. `search_text`는 read limit 초과, binary(NUL), non-UTF-8 파일을 건너뛴다. depth 제한(`WORKSPACE_MAX_DEPTH`)은 적용하지 않음 | depth 3이면 recursive 검색이 의미 없음. 대신 M22 상한으로 작업량을 막음 |
 | M22 | 검색 작업량 상한 | 순회 중 만나는 regular file 수를 `WORKSPACE_MAX_SEARCH_FILES`(기본 10000)로 제한하고, 결과 수는 `limit`(최대 `WORKSPACE_MAX_DIRECTORY_ENTRIES`)으로 제한. 어느 쪽에 걸렸는지 `truncated`와 `scan_limit_reached`로 구분 | 결과가 적은 검색도 순회 비용은 클 수 있음 |
 | M23 | ignore 파일 | 순회하는 각 디렉터리의 `.gitignore`, `.ignore`를 `ignore` package로 적용. 규칙은 그 디렉터리 기준이고 상위 규칙도 함께 적용. ignore된 디렉터리는 들어가지 않으므로 그 아래 파일은 negation으로 되살릴 수 없음(git과 같음). `include_ignored: true`면 적용하지 않음. ignore 파일 자체는 `lstat`으로 regular file임을 확인한 뒤(Windows에는 `O_NOFOLLOW`가 없음) 읽고, deny 대상·read limit 초과·non-UTF-8이면 없는 것으로 취급. 규칙은 canonical 상대 경로로 맞추므로 검색 시작 경로의 상위 디렉터리 ignore 파일도 적용. 대소문자는 `ignore` package 기본값대로 무시. ignore된 파일은 검색 파일 수 상한에 세지 않음. 검색 기준 경로 자체가 상위 규칙에 ignore되면(예: `node_modules/pkg`) 호출자가 명시한 것으로 보고 상위 ignore 파일을 적용하지 않음. 기준 경로 아래의 ignore 파일은 그대로 적용. `list_directory`, `read_file`에는 적용하지 않음. global excludes와 `.git/info/exclude`는 읽지 않음(`.git`은 deny) | 검색 결과에서 `node_modules`, build 산출물 같은 소음을 뺌. ignore는 편의 기능이지 보안 경계가 아니므로 deny와 섞지 않음 |
-| M24 | timeout 후 작업 중단 | `runTool`이 timeout 때 `AbortSignal`을 abort하고 검색 순회는 파일마다 signal을 확인해 멈춤 | 이전에는 timeout 응답 뒤에도 순회가 끝까지 돌았음 |
+| M24 | timeout 후 작업 중단 | `runTool`이 timeout 때 `AbortSignal`을 abort하고 검색 순회는 파일마다 signal을 확인해 멈춤 | 이전에는 timeout 응답 뒤에도 순회가 끝까지 돌았음 (쓰기 경로는 M43 참조) |
 | M25 | well-formed가 아닌 content | `write_file`·`edit_file` 결과에 lone surrogate가 있으면 `BINARY_FILE`로 거부 | `Buffer.from`이 lone surrogate를 U+FFFD로 바꿔, 보낸 것과 다른 내용이 저장됨. `edit_file`에서 `old_string`이 surrogate pair의 절반이면 파일이 손상됨 |
 
 ### 1.2.2 보안 피드백 후속 결정 (2026-09-23)
@@ -98,6 +98,12 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 
 `multi_edit_file`의 description 마지막 문장과 workspace·mode 선택은 `write_file`·`edit_file`과 같이 M38·M39를 따른다.
 
+### 1.2.8 Timeout 후 쓰기 중단 (2026-09-24)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M43 | timeout 뒤 write commit | `runTool`의 signal을 `WriteFileOptions.signal`로 `writeTextFile`에 넘긴다. `file-editor`는 options를 그대로 넘기므로 `write_file`·`edit_file`·`multi_edit_file`이 같은 경로를 탄다. `writeTextFile`은 path lock을 얻은 직후와, revision 재확인·temp file 쓰기·fsync 뒤 `link()`/`rename()` 직전에 `signal.throwIfAborted()`를 호출한다(M24 walker와 같은 방식). 두 번째 검사는 기존 `try` 안이라 `catch`가 temp file을 지운다. abort 뒤 던진 오류는 이미 settle된 `Promise.race`가 버리므로 응답과 audit은 `TIMEOUT` 1건 그대로다. 이를 보장하려고 `runTool` timer는 `TIMEOUT` reject를 먼저 하고 `abort()`를 나중에 한다 | 이전에는 lock 대기 중이거나 느린 쓰기 뒤에 client가 `TIMEOUT`을 받은 요청도 나중에 파일을 바꿀 수 있었음. 기존 순서(abort 후 reject)에서는 abort listener에서 동기로 reject하는 operation이 race를 이겨 `TIMEOUT` 대신 그 오류가 응답됐음(test로 확인). 마지막 검사와 `link()`/`rename()` 사이, 그리고 이미 시작된 syscall은 취소할 수 없어 짧은 window가 남는다(3절). M13의 "재조회로 결과 확인" 안내는 그대로 유효 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다(M39 이후 workspace마다 `Workspace.mode` 하나). 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -130,6 +136,8 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 - **TOCTOU**: 경로 검증과 실제 open 사이에 로컬 프로세스가 중간 directory를 symlink로 바꾸면 우회할 수 있다. Node에는 `openat2(RESOLVE_BENEATH)`가 없다. 마지막 component는 `O_NOFOLLOW`로 open해 줄이지만, 최종 경계는 ADR 11대로 OS 권한이다.
 - **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
 - **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
+- **timeout 직후 commit**: write는 `link()`/`rename()` 직전에 abort를 확인하지만(M43), 그 검사 뒤 timeout이 나거나 syscall이 이미 진행 중이면 client가 `TIMEOUT`을 받은 뒤에도 쓰기가 끝날 수 있다. `TIMEOUT` message대로 재조회로 결과를 확인해야 한다.
+- **abort된 새 파일 write의 빈 directory**: lock 획득 직후 검사와 commit 직전 검사 사이에 abort되면, 중첩 경로의 새 파일 write가 `createMissingDirectories`로 만든 부모 directory는 빈 채로 남는다. `REVISION_CONFLICT`(concurrent create의 `EEXIST`) 등 기존 실패 경로와 같은 동작이며 파일 내용은 쓰지 않는다.
 - **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 test suite를 실행한다. 첫 실행에서 오류 code 차이 1건이 나와 M28로 고쳤고, M28 반영 후 재실행에서 통과했다(6절).
 - **prompt injection을 통한 write**: read-write 모드에서 model이 읽은 파일에 심어진 지시가 `write_file`·`edit_file`·`multi_edit_file` 호출로 이어질 수 있다. revision은 model도 `read_file`로 얻으므로 방어가 아니다. 서버는 read-only 기본값과 `destructiveHint`만 제공하고, 승인은 client 설정(README)에 맡긴다. 피해 복구 수단(revision history, rollback)은 PRD Phase 2 범위다.
 - **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
@@ -187,6 +195,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 - multi-workspace (2026-09-24, ADR-008): `pnpm test` 376개 통과. stdio test로 `WORKSPACE_ROOTS`의 `workspace` enum schema, workspace 간 격리, workspace별 escape·deny 거부, 모르는 이름과 누락 거부, audit의 `workspace` field, single mode schema에 `workspace`가 없음을 확인했다. `pnpm e2e:tunnel`에 multi case를 추가해 `tunnel-client` 0.0.14 `dev proxy` 경유(modern era)로 같은 항목이 통과했다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 23개도 통과했다. hosted(ChatGPT UI) 경로는 아직 확인하지 않았다
 - workspace별 mode (2026-09-24, ADR-008 Amendment): `pnpm test` 12 files, 391 tests 통과(config 65, stdio 27). config test로 `WORKSPACE_READ_WRITE`의 workspace별 mode, `WORKSPACE_MODE=read-write` 단독 시 전체 read-write, 거부 조건(single mode, `WORKSPACE_MODE` 동시 지정, 없는 이름, 중복, 빈 항목, 대소문자 다른 이름)을 확인했다. stdio test로 `workspaces[].mode`와 top-level `mode` 부재, description의 쓰기 가능 workspace 이름, read-only workspace의 `write_file`·`edit_file` `READ_ONLY`와 쓰기 가능 workspace의 성공, audit의 `workspace`·`error_code`, host 경로 비노출을 확인했다. single mode는 `main`과 tools/list·`get_workspace_info`·`READ_ONLY` 결과를 JSON으로 비교해 byte 단위로 같았다(read-only·read-write 양쪽). `pnpm e2e:tunnel` multi case를 `WORKSPACE_READ_WRITE=web`으로 바꿔 `tunnel-client` `dev proxy` 경유로 `api` 쓰기 `READ_ONLY`, `web` 쓰기 성공, audit의 `READ_ONLY` 기록이 통과했다
 - multi-edit (2026-09-24, M40~M42): `pnpm test` 12 files, 408개 통과(per-workspace mode 병합 후). unit test로 순차 적용, edit별 교체 횟수, 뒤 edit 실패 시 무변경과 `edits[i]` 표시, surrogate pair 분할(중간 분할 후 재결합, 두 pair에 걸친 match, lone surrogate `new_string`), 중간·최종 write limit, 결과를 만들기 전 크기 사전 검사(1 MiB `replace_all`이 `RangeError` 대신 `FILE_TOO_LARGE`), 경로 오류가 surrogate 검사보다 먼저 나옴, 개수 상한을 확인했다. stdio test로 `multi_edit_file` schema(`maxItems` 100, annotations), `edit_file` 입력 schema 불변, 성공·실패 호출, `WORKSPACE_READ_WRITE` 혼합 설정에서 read-only workspace `READ_ONLY`와 writable workspace 성공을 확인했다. `pnpm e2e:tunnel`이 `tunnel-client` `dev proxy` 경유 legacy·modern 양쪽에서 8개 tool을, multi case에서 `multi_edit_file`의 workspace별 mode를 확인했다
+- timeout 후 쓰기 중단 (2026-09-24, M43): `pnpm test` 13 files, 416개 통과. unit test로 이미 abort된 signal이면 기존 파일 교체·새 파일 생성 모두 무변경(부모 directory도 만들지 않음), lock을 얻은 뒤 abort되면 revision 확인과 temp file 쓰기 후에도 commit하지 않음, 앞선 쓰기가 lock을 잡은 동안 대기 중인 요청이 abort되면 쓰지 않음(대기 요청의 `expected_revision`은 앞선 쓰기 결과와 일치), 세 경우 모두 temp file이 남지 않음, `edit_file`·`multi_edit_file` core가 signal을 전달함, abort에 동기로 reject하는 operation에도 응답과 audit이 `TIMEOUT` 1건임을 확인했다. 느린 쓰기는 sleep 대신 lock 안의 `resolveForWrite`를 막는 `PathGuard` subclass(`GatedGuard`)로 재현했다. handler 단위로는 in-memory transport로 `write_file`·`edit_file`·`multi_edit_file`을 호출해 client가 `TIMEOUT`을 받은 뒤 gate를 열어도 파일이 바뀌지 않고 audit이 `TIMEOUT` 1건임을 확인했다. 세 handler에서 signal 전달을 빼면 이 test 3개가 실패한다(mutation 확인). `runTool`을 바꿨으므로 `pnpm e2e:tunnel`도 legacy·modern·multi 모두 통과했다
 - 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
 ## 7. Future TODO

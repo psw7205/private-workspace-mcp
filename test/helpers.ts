@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { WorkspaceError, type ErrorCode } from '../src/errors/errors.js';
+import { PathGuard, type WriteTarget } from '../src/filesystem/path-guard.js';
 
 export interface Fixture {
   /** Workspace root as created by mkdtemp. On macOS this sits behind the `/var -> /private/var` symlink. */
@@ -77,5 +78,51 @@ export function expectNoHostPath(text: string, fixture: Fixture): void {
     if (text.includes(hostPath)) {
       throw new Error(`host path leaked: ${text}`);
     }
+  }
+}
+
+/**
+ * Pauses one resolveForWrite call until open() is called. writeTextFile resolves twice: once
+ * for the lock key and once under the path lock, so the default gates the call under the lock.
+ * The edit tools resolve once more before writing; pass 3 for them.
+ */
+export class GatedGuard extends PathGuard {
+  private calls = 0;
+  private release!: () => void;
+  private readonly gate = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+  private markResolved!: () => void;
+  /** Resolves once the lock key is resolved, just before the write queues on the path lock. */
+  readonly lockKeyResolved = new Promise<void>((resolve) => {
+    this.markResolved = resolve;
+  });
+  private markEntered!: () => void;
+  /** Resolves once the write holds the path lock and waits at the gate. */
+  readonly entered = new Promise<void>((resolve) => {
+    this.markEntered = resolve;
+  });
+
+  constructor(
+    root: string,
+    private readonly gatedCall = 2,
+  ) {
+    super(root);
+  }
+
+  override async resolveForWrite(input: string): Promise<WriteTarget> {
+    this.calls += 1;
+    if (this.calls === this.gatedCall) {
+      this.markEntered();
+      await this.gate;
+      return super.resolveForWrite(input);
+    }
+    const target = await super.resolveForWrite(input);
+    if (this.calls === this.gatedCall - 1) this.markResolved();
+    return target;
+  }
+
+  open(): void {
+    this.release();
   }
 }

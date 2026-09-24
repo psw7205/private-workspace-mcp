@@ -71,4 +71,21 @@ describe('runTool', () => {
     });
     expect(signal?.aborted).toBe(true);
   });
+
+  it('keeps the TIMEOUT result when the operation rejects after the abort', async () => {
+    const { records, options } = setup(20);
+    let late: Promise<unknown> | undefined;
+    const result = await runTool(options, (signal) => {
+      const operation = new Promise<never>((_, reject) => {
+        signal.addEventListener('abort', () => reject(new WorkspaceError('REVISION_CONFLICT', 'late failure')));
+      });
+      late = operation.catch(() => undefined);
+      return operation;
+    });
+    await late;
+
+    expect(JSON.parse((result.content[0] as { text: string }).text).error.code).toBe('TIMEOUT');
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ ok: false, error_code: 'TIMEOUT' });
+  });
 });

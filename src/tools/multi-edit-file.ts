@@ -46,11 +46,11 @@ export function registerMultiEditFile(server: McpServer, deps: ToolDeps): void {
     async ({ workspace, path, edits, expected_revision }, ctx) =>
       runTool(
         { tool: 'multi_edit_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit },
-        async () => {
+        async (signal) => {
           const { guard, mode } = selectWorkspace(deps, workspace);
           const result = await editTextFileMulti(
             guard,
-            { mode, maxReadBytes, maxWriteBytes },
+            { mode, maxReadBytes, maxWriteBytes, signal },
             {
               path,
               edits: edits.map((edit) => ({

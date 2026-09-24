@@ -8,7 +8,7 @@ import { writeTextFile } from '../src/filesystem/file-writer.js';
 import { PathGuard } from '../src/filesystem/path-guard.js';
 import { computeRevision } from '../src/filesystem/revision.js';
 import { WorkspaceError } from '../src/errors/errors.js';
-import { createFixture, expectNoHostPath, expectWorkspaceError, type Fixture } from './helpers.js';
+import { createFixture, expectNoHostPath, expectWorkspaceError, GatedGuard, type Fixture } from './helpers.js';
 
 const readWrite = { mode: 'read-write', maxReadBytes: 64, maxWriteBytes: 32 } as const;
 
@@ -211,5 +211,84 @@ describe('writeTextFile', () => {
       expectedRevision: computeRevision(Buffer.from('stale')),
     }).catch(() => undefined);
     expect((await readdir(inRoot('src'))).sort()).toEqual(['a.ts', 'index.ts']);
+  });
+});
+
+describe('writeTextFile after its signal aborts (M43)', () => {
+  let fixture: Fixture;
+  let guard: PathGuard;
+
+  beforeEach(async () => {
+    fixture = await createFixture();
+    guard = new PathGuard(fixture.realRoot);
+  });
+
+  afterEach(async () => {
+    await fixture.cleanup();
+  });
+
+  const inRoot = (relative: string) => path.join(fixture.root, relative);
+  const tempFiles = async () => (await readdir(fixture.root)).filter((name) => name.startsWith('.pwmcp-'));
+
+  it('writes nothing when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const options = { ...readWrite, signal: controller.signal };
+    const revision = computeRevision(await readFile(inRoot('README.md')));
+
+    await expect(
+      writeTextFile(guard, options, { path: 'README.md', content: 'late', expectedRevision: revision }),
+    ).rejects.toThrow();
+    await expect(writeTextFile(guard, options, { path: 'docs/new.md', content: 'late' })).rejects.toThrow();
+
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+    await expect(stat(inRoot('docs'))).rejects.toThrow();
+    expect(await tempFiles()).toEqual([]);
+  });
+
+  it('does not commit when the signal aborts after the lock is taken', async () => {
+    const gated = new GatedGuard(fixture.realRoot);
+    const controller = new AbortController();
+    const revision = computeRevision(await readFile(inRoot('README.md')));
+    const write = writeTextFile(
+      gated,
+      { ...readWrite, signal: controller.signal },
+      { path: 'README.md', content: 'late', expectedRevision: revision },
+    );
+    // Past the lock-acquired check; the revision check still passes, so only the commit check can stop it.
+    await gated.entered;
+    controller.abort();
+    gated.open();
+
+    await expect(write).rejects.toThrow();
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+    expect(await tempFiles()).toEqual([]);
+  });
+
+  it('does not commit a write whose signal aborts while it waits for the path lock', async () => {
+    const slow = new GatedGuard(fixture.realRoot);
+    const original = computeRevision(await readFile(inRoot('README.md')));
+    const first = writeTextFile(slow, readWrite, { path: 'README.md', content: 'first', expectedRevision: original });
+    await slow.entered;
+
+    const waiting = new GatedGuard(fixture.realRoot);
+    waiting.open();
+    const controller = new AbortController();
+    // Valid after the first write, so this write would succeed if its signal had not aborted.
+    const queued = writeTextFile(
+      waiting,
+      { ...readWrite, signal: controller.signal },
+      { path: 'README.md', content: 'queued', expectedRevision: computeRevision(Buffer.from('first')) },
+    );
+    await waiting.lockKeyResolved;
+    // Let the write queue behind the lock holder before aborting.
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+    slow.open();
+
+    await expect(first).resolves.toMatchObject({ created: false });
+    await expect(queued).rejects.toThrow();
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('first');
+    expect(await tempFiles()).toEqual([]);
   });
 });

@@ -10,6 +10,8 @@ import { computeRevision } from './revision.js';
 
 export interface WriteFileOptions extends Pick<Limits, 'maxReadBytes' | 'maxWriteBytes'> {
   mode: WorkspaceMode;
+  /** Aborted by runTool on timeout; the write is then not committed (M43). */
+  signal?: AbortSignal;
 }
 
 export interface WriteFileParams {
@@ -48,6 +50,7 @@ async function withPathLock<T>(key: string, task: () => Promise<T>): Promise<T> 
  * Existing files are replaced via temp file + fsync + rename after the current
  * revision matches `expectedRevision`. New files are published with link(), which
  * fails if the path appeared in the meantime, so creation never overwrites.
+ * An aborted `options.signal` stops the write before link()/rename().
  */
 export async function writeTextFile(
   guard: PathGuard,
@@ -71,6 +74,8 @@ export async function writeTextFile(
 
   const { absolutePath: lockKey } = await guard.resolveForWrite(params.path);
   return withPathLock(lockKey, async () => {
+    // The request may have timed out while this write waited for the lock.
+    options.signal?.throwIfAborted();
     // Resolve again under the lock: a queued write may have changed the target.
     const target = await guard.resolveForWrite(params.path);
     const { relativePath, absolutePath } = target;
@@ -115,6 +120,8 @@ export async function writeTextFile(
         await handle.close();
       }
 
+      // Last check before the irreversible step; the catch below removes the temp file.
+      options.signal?.throwIfAborted();
       if (existingMode === undefined) {
         await link(tempPath, absolutePath).catch((error: NodeJS.ErrnoException) => {
           if (error.code === 'EEXIST') {

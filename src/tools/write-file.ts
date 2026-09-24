@@ -39,11 +39,11 @@ export function registerWriteFile(server: McpServer, deps: ToolDeps): void {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ workspace, path, content, expected_revision }, ctx) =>
-      runTool({ tool: 'write_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
+      runTool({ tool: 'write_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {
         const { guard, mode } = selectWorkspace(deps, workspace);
         const result = await writeTextFile(
           guard,
-          { mode, maxReadBytes, maxWriteBytes },
+          { mode, maxReadBytes, maxWriteBytes, signal },
           { path, content, expectedRevision: expected_revision },
         );
         return { result: { ...result }, bytesWritten: result.bytes_written };
