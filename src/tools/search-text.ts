@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
-import { searchText } from '../filesystem/file-search.js';
+import { MAX_REGEX_LENGTH, searchText } from '../filesystem/file-search.js';
 import { MAX_GLOB_LENGTH } from '../filesystem/glob.js';
 import { guardFor, runTool, type ToolDeps } from './run-tool.js';
 import { pathSchema, workspaceShape } from './schemas.js';
@@ -24,7 +24,10 @@ export function registerSearchText(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Search text',
       description:
-        'Search UTF-8 text files under a workspace directory for a literal string (not a regex), at any depth. ' +
+        'Search UTF-8 text files under a workspace directory for a literal string, at any depth. ' +
+        'Set `regex` to true to match `query` as an RE2 regular expression instead (linear time; no backreferences or lookaround; ' +
+        `\\d, \\w, \\b are ASCII-only; at most ${MAX_REGEX_LENGTH} characters; overly complex patterns are rejected). ` +
+        'Matching is per line, so ^ and $ match at line boundaries. ' +
         'Returns the first match on each line with its 1-based line and column; long lines are cut around the match. ' +
         'Narrow the files with `glob` (relative to `path`, for example `**/*.ts`). ' +
         `Binary, non-UTF-8, and files over ${maxReadBytes} bytes are skipped, as are files ignored by .gitignore or .ignore unless \`include_ignored\` is true. ` +
@@ -37,8 +40,9 @@ export function registerSearchText(server: McpServer, deps: ToolDeps): void {
           .min(1)
           .max(1024)
           .regex(/^[^\r\n]*$/, 'query must be a single line')
-          .describe('Literal text to find within one line'),
+          .describe('Text to find within one line; an RE2 regex when `regex` is true'),
         glob: z.string().min(1).max(MAX_GLOB_LENGTH).optional().describe('Only search files whose path relative to `path` matches this glob'),
+        regex: z.boolean().default(false).describe('Interpret `query` as an RE2 regular expression'),
         case_sensitive: z.boolean().default(false),
         include_ignored: z.boolean().default(false).describe('Also search files ignored by .gitignore or .ignore'),
         limit: z
@@ -52,12 +56,12 @@ export function registerSearchText(server: McpServer, deps: ToolDeps): void {
       outputSchema,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ workspace, path, query, glob, case_sensitive, include_ignored, limit }, ctx) =>
+    async ({ workspace, path, query, regex, glob, case_sensitive, include_ignored, limit }, ctx) =>
       runTool({ tool: 'search_text', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {
         const { bytesRead, ...result } = await searchText(
           guardFor(deps, workspace),
           { maxSearchFiles, maxReadBytes, signal },
-          { path, query, glob, caseSensitive: case_sensitive, includeIgnored: include_ignored, limit },
+          { path, query, glob, caseSensitive: case_sensitive, includeIgnored: include_ignored, limit, regex },
         );
         return { result, bytesRead };
       }),

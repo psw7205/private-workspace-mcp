@@ -25,6 +25,7 @@
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
     "ignore": "^7.0.10",
+    "re2js": "^2.8.6",
     "zod": "^4.6.5"
   },
   "devDependencies": {

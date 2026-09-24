@@ -1,4 +1,7 @@
 import { stat } from 'node:fs/promises';
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
+
+import { RE2JS, RE2JSException } from 're2js';
 
 import { fromFsError, WorkspaceError } from '../errors/errors.js';
 import { decodeTextFile, readRegularFile } from './file-reader.js';
@@ -61,13 +64,15 @@ export async function findFiles(guard: PathGuard, options: SearchOptions, params
 export interface SearchTextParams {
   /** Directory to search; `.` is the workspace root. */
   path: string;
-  /** Literal text; never interpreted as a pattern. */
+  /** Literal text, or an RE2 regex when `regex` is true. */
   query: string;
   /** Optional glob, relative to `path`, that files must match. */
   glob?: string | undefined;
   caseSensitive: boolean;
   includeIgnored: boolean;
   limit: number;
+  /** Interpret `query` as an RE2 regex (linear-time engine) instead of literal text. */
+  regex: boolean;
 }
 
 export interface TextMatch {
@@ -94,16 +99,26 @@ export interface SearchTextResult {
 const MAX_MATCH_TEXT = 200;
 const MATCH_TEXT_LEAD = 60;
 
+/** Longest regex `search_text` compiles, like the glob limit. */
+export const MAX_REGEX_LENGTH = 256;
 /**
- * Finds the first occurrence of `query` on each line of the text files under `params.path`.
+ * Largest compiled regex program (re2js `programSize`). Matching is linear in line length times
+ * program size, so this bounds how long one line can block the event loop.
+ */
+export const MAX_REGEX_PROGRAM_SIZE = 100;
+/** How long line matching runs before yielding so a timeout can abort the search. */
+const YIELD_INTERVAL_MS = 20;
+
+/**
+ * Finds the first match of `query` on each line of the text files under `params.path`.
  * Files that read_file would reject (too large, binary, not UTF-8) or that cannot be read are
- * skipped. The query is escaped into a literal regex only for case folding, so matching is
- * linear and cannot backtrack.
+ * skipped. Neither mode backtracks: a literal query is escaped into a native regex only for case
+ * folding, and a regex query runs on re2js, whose matching is linear in the input.
  */
 export async function searchText(guard: PathGuard, options: SearchOptions, params: SearchTextParams): Promise<SearchTextResult> {
   const base = await resolveSearchBase(guard, params.path);
   const matchesGlob = params.glob === undefined ? () => true : globMatcher(base, params.glob);
-  const needle = new RegExp(params.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), params.caseSensitive ? 'u' : 'iu');
+  const findIn = params.regex ? regexMatcher(params.query, params.caseSensitive) : literalMatcher(params.query, params.caseSensitive);
   const stats: WalkStats = { filesScanned: 0, scanLimitReached: false };
   const matches: TextMatch[] = [];
   let filesSearched = 0;
@@ -122,16 +137,25 @@ export async function searchText(guard: PathGuard, options: SearchOptions, param
     }
     filesSearched++;
 
+    // Count lines like read_file: a final line break does not start another line.
     const lines = text.split('\n');
+    if (lines.at(-1) === '') lines.pop();
+    let yieldedAt = performance.now();
     for (let index = 0; index < lines.length; index++) {
+      // Matching is synchronous; yield now and then so the request timeout can fire and abort.
+      if (performance.now() - yieldedAt >= YIELD_INTERVAL_MS) {
+        await yieldToEventLoop();
+        options.signal?.throwIfAborted();
+        yieldedAt = performance.now();
+      }
       const line = (lines[index] as string).replace(/\r$/, '');
-      const found = needle.exec(line);
-      if (found === null) continue;
+      const found = findIn(line);
+      if (found < 0) continue;
       if (matches.length >= params.limit) {
         truncated = true;
         break search;
       }
-      matches.push({ path: file.relativePath, line: index + 1, column: found.index + 1, text: matchText(line, found.index) });
+      matches.push({ path: file.relativePath, line: index + 1, column: found + 1, text: matchText(line, found) });
     }
   }
 
@@ -144,6 +168,42 @@ export async function searchText(guard: PathGuard, options: SearchOptions, param
     scan_limit_reached: stats.scanLimitReached,
     bytesRead,
   };
+}
+
+/** Returns the UTF-16 index of the first match in `line`, or -1. */
+type LineMatcher = (line: string) => number;
+
+function literalMatcher(query: string, caseSensitive: boolean): LineMatcher {
+  const needle = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), caseSensitive ? 'u' : 'iu');
+  return (line) => needle.exec(line)?.index ?? -1;
+}
+
+/** Compiles `pattern` with re2js (RE2 syntax: no backreferences or lookaround). */
+function regexMatcher(pattern: string, caseSensitive: boolean): LineMatcher {
+  if (pattern.length > MAX_REGEX_LENGTH) throw invalidRegex(`must be at most ${MAX_REGEX_LENGTH} characters`);
+  let compiled: RE2JS;
+  try {
+    // Check syntax without flags first: re2js quotes the pattern in its message, prefixed with
+    // `(?i)` under CASE_INSENSITIVE, and the client should only see what it sent.
+    compiled = RE2JS.compile(pattern, 0);
+    if (!caseSensitive) compiled = RE2JS.compile(pattern, RE2JS.CASE_INSENSITIVE);
+  } catch (error) {
+    if (error instanceof RE2JSException) throw invalidRegex(`is invalid: ${error.message}`);
+    throw error;
+  }
+  if (compiled.programSize() > MAX_REGEX_PROGRAM_SIZE) {
+    throw invalidRegex('is too complex; use fewer or smaller repetitions and alternatives');
+  }
+  return (line) => {
+    // test() needs no match position, so re2js can answer it with its DFA; most lines do not match.
+    if (!compiled.test(line)) return -1;
+    const matcher = compiled.matcher(line);
+    return matcher.find() ? matcher.start() : -1;
+  };
+}
+
+function invalidRegex(reason: string): WorkspaceError {
+  return new WorkspaceError('INVALID_PATH', `regex pattern ${reason}`);
 }
 
 function matchText(line: string, index: number): string {

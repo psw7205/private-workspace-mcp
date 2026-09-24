@@ -249,6 +249,23 @@ describe('stdio server', () => {
       expect((multiline as ToolText).isError).toBe(true);
     });
 
+    it('searches with an opt-in RE2 regex and rejects invalid patterns', async () => {
+      const { tools } = await session.client.listTools();
+      const schema = tools.find((tool) => tool.name === 'search_text')?.inputSchema;
+      expect(schema?.properties?.regex).toMatchObject({ type: 'boolean', default: false });
+      expect(schema?.required ?? []).not.toContain('regex');
+
+      const found = parseText(await session.client.callTool({ name: 'search_text', arguments: { query: '^exp\\w+ \\{\\};$', regex: true } }));
+      expect(found.matches).toContainEqual({ path: 'src/index.ts', line: 1, column: 1, text: 'export {};' });
+      const literal = parseText(await session.client.callTool({ name: 'search_text', arguments: { query: '^exp\\w+' } }));
+      expect(literal.matches).toEqual([]);
+
+      const invalid = await session.client.callTool({ name: 'search_text', arguments: { query: '(a', regex: true } });
+      expect((invalid as ToolText).isError).toBe(true);
+      expect(parseText(invalid).error.code).toBe('INVALID_PATH');
+      expectNoHostPath(JSON.stringify(invalid), fixture);
+    });
+
     it('rejects a depth above the configured maximum before running', async () => {
       const result = await session.client.callTool({ name: 'list_directory', arguments: { path: '.', depth: 3 } });
       expect((result as ToolText).isError).toBe(true);

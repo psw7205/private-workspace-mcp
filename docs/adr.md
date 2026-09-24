@@ -250,6 +250,8 @@ process
 
 > **Amendment (2026-09-23):** Phase 2와 3의 첫 tool로 `edit_file`(ADR-002), `find_files`, `search_text`를 추가한다. `find_files`와 `search_text`는 read-only이고 기존 filesystem 규칙(PathGuard, deny 양쪽 검사, symlink 미추적, 특수 파일·binary·non-UTF-8 제외)을 따른다. 검색은 in-process literal 검색만 한다. `rg` 같은 외부 process 실행은 15절에 따라 제외하고, client가 준 regex는 timeout으로 끊을 수 없는 동기 실행이라 제외한다. `.gitignore`와 `.ignore`를 순회에 적용한다. 세부 결정은 `docs/implementation-notes.md` M19~M24에 둔다. delete, move, rename 등 위 목록은 여전히 보류다.
 
+> **Amendment (2026-09-24):** `search_text`는 opt-in `regex` 인자로 client가 준 regex를 받을 수 있다. regex는 native `RegExp`가 아니라 선형 시간 엔진 `re2js`(RE2 port)로만 실행한다. 지수 시간 backtracking이 없고 실행 시간이 입력 길이 × program 크기에 선형이므로 catastrophic backtracking이 생기지 않는다. 선형이어도 비용은 입력 길이 × program 크기라, 패턴 길이와 compile된 program 크기에 상한을 두고 줄 matching 중 주기적으로 event loop에 양보해 timeout이 파일 도중에도 동작하게 한다. 기본값은 literal 검색 그대로다. 외부 process 실행 제외는 유지한다. 세부 결정은 `docs/implementation-notes.md` M44~M46에 둔다.
+
 ---
 
 # 10. Path Security

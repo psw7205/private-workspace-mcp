@@ -231,6 +231,11 @@ describe('searchText', () => {
     await write('.env', 'NEEDLE=secret\n');
     await write('.gitignore', 'ignored/\n');
     await write('ignored/c.ts', 'needle\n');
+    await write('uni/emoji.txt', '😀 Café Ünïcode\n');
+    await write('lines/trailing.txt', 'a\n\n');
+    await write('lines/empty.txt', '');
+    await write('lines/crlf.txt', 'x\r\n \r\n');
+    await write('lines/no-newline.txt', 'x\ny');
   });
 
   afterAll(async () => {
@@ -239,7 +244,7 @@ describe('searchText', () => {
 
   const search = (
     query: string,
-    extra: { path?: string; glob?: string; caseSensitive?: boolean; includeIgnored?: boolean; limit?: number } = {},
+    extra: { path?: string; glob?: string; caseSensitive?: boolean; includeIgnored?: boolean; limit?: number; regex?: boolean } = {},
     searchOptions: { maxSearchFiles?: number; signal?: AbortSignal } = {},
   ) =>
     searchText(
@@ -252,6 +257,7 @@ describe('searchText', () => {
         caseSensitive: extra.caseSensitive ?? false,
         includeIgnored: extra.includeIgnored ?? false,
         limit: extra.limit ?? 100,
+        regex: extra.regex ?? false,
       },
     );
 
@@ -280,6 +286,88 @@ describe('searchText', () => {
   it('treats the query literally', async () => {
     expect((await search('n.edle', { path: 'src' })).matches).toEqual([]);
     expect((await search('(a+)+$', { path: 'src' })).matches).toEqual([]);
+  });
+
+  it('matches a regex per line, ignoring case by default, with the literal result shape', async () => {
+    const result = await search('ne+dle\\s', { path: 'src', glob: '*.{ts,md}', regex: true });
+    expect(result).toEqual({
+      path: 'src',
+      query: 'ne+dle\\s',
+      matches: [
+        { path: 'src/a.ts', line: 1, column: 7, text: 'const needle = 1;' },
+        { path: 'src/a.ts', line: 3, column: 4, text: '// Needle needle again' },
+        { path: 'src/b.md', line: 2, column: 5, text: 'has NEEDLE here' },
+      ],
+      files_searched: 3,
+      truncated: false,
+      scan_limit_reached: false,
+      bytesRead: expect.any(Number),
+    });
+  });
+
+  it('matches a regex case-sensitively on request', async () => {
+    const result = await search('N\\w+', { path: 'src', glob: '*.{ts,md}', caseSensitive: true, regex: true });
+    expect(result.matches).toEqual([
+      { path: 'src/a.ts', line: 3, column: 4, text: '// Needle needle again' },
+      { path: 'src/b.md', line: 2, column: 5, text: 'has NEEDLE here' },
+    ]);
+  });
+
+  it('anchors a regex to each line without its line break', async () => {
+    const result = await search('^has.*here$', { path: 'src', regex: true });
+    expect(result.matches).toEqual([{ path: 'src/b.md', line: 2, column: 1, text: 'has NEEDLE here' }]);
+  });
+
+  it('numbers lines like read_file, without a line after the final line break', async () => {
+    const result = await search('^\\s*$', { path: 'lines', regex: true });
+    expect(result.matches).toEqual([
+      { path: 'lines/crlf.txt', line: 2, column: 1, text: ' ' },
+      { path: 'lines/trailing.txt', line: 2, column: 1, text: '' },
+    ]);
+    expect((await search('^y$', { path: 'lines', regex: true })).matches).toEqual([
+      { path: 'lines/no-newline.txt', line: 2, column: 1, text: 'y' },
+    ]);
+  });
+
+  it('interprets the query as a regex only on request', async () => {
+    expect((await search('n.edle', { path: 'src', glob: '*.ts' })).matches).toEqual([]);
+    expect((await search('n.edle', { path: 'src', glob: '*.ts', regex: true })).matches).toHaveLength(2);
+  });
+
+  it('reports regex columns in UTF-16 code units like literal search', async () => {
+    const literal = await search('café ünï', { path: 'uni' });
+    const regex = await search('caf. ü\\pL+', { path: 'uni', regex: true });
+    expect(literal.matches).toEqual([{ path: 'uni/emoji.txt', line: 1, column: 4, text: '😀 Café Ünïcode' }]);
+    expect(regex.matches).toEqual(literal.matches);
+  });
+
+  it('keeps ignore and deny rules in regex mode', async () => {
+    const paths = (await search('^needle', { regex: true })).matches.map((match) => match.path);
+    expect(paths).not.toContain('ignored/c.ts');
+    const withIgnored = (await search('^needle', { includeIgnored: true, regex: true })).matches.map((match) => match.path);
+    expect(withIgnored).toContain('ignored/c.ts');
+    expect(withIgnored).not.toContain('.env');
+  });
+
+  it.each([
+    ['(', 'missing closing'],
+    ['(?=a)', 'unsupported'],
+    ['\\1', 'invalid escape'],
+    ['a'.repeat(257), 'at most 256 characters'],
+    ['\\w{100}!', 'too complex'],
+  ])('rejects regex %j before searching', async (query, reason) => {
+    const controller = new AbortController();
+    controller.abort();
+    const error = await expectWorkspaceError(search(query, { regex: true }, { signal: controller.signal }), 'INVALID_PATH');
+    expect(error.message).toContain('regex');
+    expect(error.message).toContain(reason);
+    expectNoHostPath(error.message, fixture);
+  });
+
+  it('quotes only the client\'s pattern in a case-insensitive regex error', async () => {
+    const error = await expectWorkspaceError(search('(a', { regex: true }), 'INVALID_PATH');
+    expect(error.message).toContain('(a');
+    expect(error.message).not.toContain('(?i)');
   });
 
   it('shows a window around a match in a long line', async () => {
@@ -328,5 +416,45 @@ describe('searchText', () => {
 
   it('never returns host paths', async () => {
     expectNoHostPath(JSON.stringify(await search('e')), fixture);
+  });
+});
+
+describe('searchText regex cost', () => {
+  const size = 1024 * 1024;
+  let fixture: Fixture;
+  let guard: PathGuard;
+
+  beforeAll(async () => {
+    fixture = await createFixture();
+    guard = new PathGuard(fixture.realRoot);
+    await mkdir(path.join(fixture.root, 'big'));
+    await writeFile(path.join(fixture.root, 'big/one-line.txt'), `${'a'.repeat(size - 2)}!\n`);
+    // Alone in its directory, so the walker has no later entry at which to notice an abort.
+    await mkdir(path.join(fixture.root, 'abort'));
+    await writeFile(path.join(fixture.root, 'abort/lines.txt'), `${'a'.repeat(1023)}!\n`.repeat(size / 1025));
+  });
+
+  afterAll(async () => {
+    await fixture.cleanup();
+  });
+
+  const search = (query: string, file: string, options: { signal?: AbortSignal; path?: string } = {}) =>
+    searchText(
+      guard,
+      { maxSearchFiles: 10, maxReadBytes: size, signal: options.signal },
+      { path: options.path ?? 'big', query, glob: file, caseSensitive: false, includeIgnored: false, limit: 100_000, regex: true },
+    );
+
+  // No wall-clock assertion (CI variance); a backtracking engine would not finish within the test timeout.
+  it.each(['(a+)+b', '(a|aa)+$', '(a*)*c', '(x+x+)+y'])('matches pathological regex %j over 1 MiB', async (query) => {
+    const result = await search(query, 'one-line.txt');
+    expect(result.files_searched).toBe(1);
+  });
+
+  it('yields within a file so an abort interrupts a long regex scan', async () => {
+    // Scanning the file takes about a second; the abort lands mid-file.
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 50);
+    await expect(search('\\w{80}!', 'lines.txt', { signal: controller.signal, path: 'abort' })).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

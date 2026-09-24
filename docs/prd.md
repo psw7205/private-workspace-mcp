@@ -661,6 +661,8 @@ MVP 범위와 분리해서 단계적으로 진행한다.
 
 > **Amendment (2026-09-23):** recursive glob 검색(`find_files`), literal text 검색(`search_text`), `.gitignore`/`.ignore` 지원을 in-process로 구현한다. ripgrep 실행, regex, symbol 검색, language detection, watcher, diagnostics는 보류한다.
 
+> **Amendment (2026-09-24):** `search_text`에 선형 시간 엔진(`re2js`)으로 실행하는 opt-in regex 검색(`regex: true`)을 추가한다(ADR-001 9절 Amendment, implementation notes M44~M46). ripgrep 실행, symbol 검색, language detection, watcher, diagnostics는 계속 보류한다.
+
 ---
 
 ## Phase 4 — Git
