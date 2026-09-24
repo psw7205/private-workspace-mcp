@@ -68,10 +68,43 @@ describe('isDenied', () => {
   });
 });
 
+describe('isDenied with line terminators in names', () => {
+  // Host names may contain line terminators; `*` must span them like any other character.
+  it.each([
+    'secret\nx.txt',
+    'secret\rx.txt',
+    'secret\r\nx.txt',
+    'secret x.txt',
+    'secret x.txt',
+    // NEL is not a JS line terminator, so `.` always matched it; kept as a guard.
+    'secret\u0085x.txt',
+    'secret\n',
+    'config/secret\nx.txt',
+    'secret\ndir/notes.md',
+    'x\n.pem',
+    '\n.pem',
+    'a\r.pem',
+    'b .pem',
+    'id_rsa\n',
+    'id_rsa\r',
+    'id_rsa ',
+    'id_rsa\nbackup',
+    '.env.\nlocal',
+    '.env.local\n',
+  ])('denies %j', (relativePath) => {
+    expect(isDenied(relativePath)).toBe(true);
+  });
+
+  // Literal patterns keep exact-segment semantics: `.env\n` is a different name, like `.env2`.
+  it.each(['.env\n', '.env\r', '\n.env', 'README\n.md'])('allows %j', (relativePath) => {
+    expect(isDenied(relativePath)).toBe(false);
+  });
+});
+
 describe('createDenyMatcher', () => {
   const matches = createDenyMatcher([...DEFAULT_DENY_PATTERNS, '*.sqlite', 'private']);
 
-  it.each(['db/app.sqlite', 'db/APP.SQLITE', 'private', 'docs/private/notes.md', '.env'])('denies %j', (relativePath) => {
+  it.each(['db/app.sqlite', 'db/APP.SQLITE', 'private', 'docs/private/notes.md', '.env', 'db/a\nb.sqlite'])('denies %j', (relativePath) => {
     expect(matches(relativePath)).toBe(true);
   });
 

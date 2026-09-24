@@ -40,7 +40,8 @@ export type DenyMatcher = (relativePath: string) => boolean;
 
 /** `relativePath` uses `/` separators; `.` denotes the workspace root. */
 export function createDenyMatcher(patterns: readonly string[]): DenyMatcher {
-  const regexes = patterns.map((pattern) => new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`, 'i'));
+  // `s`: host names can contain line terminators, and `*` must match them too (M64).
+  const regexes = patterns.map((pattern) => new RegExp(`^${pattern.split('*').map(escapeRegExp).join('.*')}$`, 'is'));
   return (relativePath) => relativePath.split('/').some((segment) => regexes.some((regex) => regex.test(segment)));
 }
 
