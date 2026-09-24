@@ -15,7 +15,7 @@ import { registerWriteFile } from '../tools/write-file.js';
 
 export const SERVER_NAME = 'private-workspace-mcp';
 // Keep in sync with the `version` in package.json.
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.2.0';
 
 /** Returns the factory `serveStdio` calls to build the instance serving a connection. */
 export function createServerFactory(config: Config, audit: AuditSink = stderrAuditSink): () => McpServer {

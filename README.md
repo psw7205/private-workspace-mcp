@@ -102,7 +102,7 @@ read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(pro
 daemon을 띄울 머신에는 GitHub Release의 `index.mjs` 하나만 설치한다. runtime dependency가 bundle에 들어 있어 Node 26 외에 source, pnpm, `node_modules`가 필요 없다. 버전마다 directory를 두고 `current` symlink로 가리킨다.
 
 ```sh
-VERSION=v0.1.0
+VERSION=v0.2.0
 DIR="$HOME/.local/share/private-workspace-mcp"
 mkdir -p "$DIR/$VERSION" && cd "$DIR/$VERSION"
 gh release download "$VERSION" --repo psw7205/private-workspace-mcp

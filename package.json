@@ -1,6 +1,6 @@
 {
   "name": "private-workspace-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Workspace-confined filesystem MCP server for OpenAI Secure MCP Tunnel (stdio)",
   "type": "module",

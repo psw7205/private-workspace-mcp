@@ -55,7 +55,8 @@ async function runCli(args: string[], env: Record<string, string> = {}) {
   let stderr = '';
   child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
   child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
-  const [code] = (await once(child, 'exit')) as [number | null];
+  // 'close', not 'exit': stdio may still hold unread output when 'exit' fires.
+  const [code] = (await once(child, 'close')) as [number | null];
   return { code, stdout, stderr };
 }
 
