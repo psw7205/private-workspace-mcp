@@ -1,6 +1,7 @@
 # ADR-004 — Git Read-only Capability
 
-* Status: Proposed
+* Status: Accepted (2026-09-24)
+* Accepted: 2026-09-24 repo 소유자가 보안 검토 후 승인했다. 구현은 v0.2.0 이후 release에 들어간다. 2.12절 조건(red-first test, `windows-latest` CI 통과, 2.10절 unresolved 해소)은 이 승인이 아니라 구현의 merge 조건이다.
 * Date: 2026-09-24
 * Scope: PRD 16 Phase 4 (Git)의 read-only 부분
 

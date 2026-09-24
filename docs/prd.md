@@ -696,6 +696,8 @@ MVP 범위와 분리해서 단계적으로 진행한다.
 
 Git도 가능하면 arbitrary shell을 통해 실행시키기보다 typed tool로 제공한다.
 
+> **Amendment (2026-09-24):** read-only Git typed tool(`git_status`, `git_diff`, `git_log`, `git_show`)을 ADR-004(`docs/adr-004-git.md`)로 구현한다. `WORKSPACE_GIT=read-only`일 때만 등록하는 opt-in이고 기본은 꺼짐이다. 위 read-only 목록 중 `branch`와 write 계열, 고위험 operation은 보류한다.
+
 ---
 
 ## Phase 5 — Shell / Command Execution
