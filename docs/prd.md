@@ -642,6 +642,8 @@ MVP 범위와 분리해서 단계적으로 진행한다.
 
 > **Amendment (2026-09-24):** 한 파일 안의 여러 exact-match 교체를 원자적으로 적용하는 `multi_edit_file`을 구현한다(ADR-002 4절 Amendment, implementation notes M40~M42). 위 "bulk edit transaction" 중 한 파일 범위만 해당하고, 여러 파일에 걸친 transaction과 나머지 항목은 여전히 보류한다.
 
+> **Amendment (2026-09-24, 2):** "before/after diff 생성"과 "write preview" 중 `edit_file`·`multi_edit_file`의 `dry_run`만 구현한다(ADR-002 5절 Amendment, implementation notes M49~M50). 모든 검사를 하되 쓰지 않고, 적용 시의 revision과 unified diff를 돌려준다. `write_file` preview, approval과 나머지 항목은 여전히 보류한다.
+
 ---
 
 ## Phase 3 — Better File Intelligence

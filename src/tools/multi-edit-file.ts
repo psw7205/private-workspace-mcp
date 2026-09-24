@@ -1,9 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
-import { editTextFileMulti, MAX_EDITS } from '../filesystem/file-editor.js';
+import { editTextFileMulti, MAX_EDITS, previewEditTextFileMulti } from '../filesystem/file-editor.js';
 import { runTool, selectWorkspace, type ToolDeps } from './run-tool.js';
-import { pathSchema, workspaceShape, writeAccessNote } from './schemas.js';
+import { DRY_RUN_NOTE, dryRunOutputShape, dryRunSchema, pathSchema, workspaceShape, writeAccessNote } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -11,6 +11,7 @@ const outputSchema = z.object({
   edit_replacements: z.array(z.number()),
   bytes_written: z.number(),
   revision: z.string(),
+  ...dryRunOutputShape,
 });
 
 const editSchema = z.object({
@@ -33,34 +34,34 @@ export function registerMultiEditFile(server: McpServer, deps: ToolDeps): void {
         'and each follows the edit_file rules (exact match, one occurrence unless `replace_all`). ' +
         'If any edit fails, nothing changes and the error names it as edits[i]. ' +
         'Pass the `revision` from read_file as `expected_revision`; the result returns the new revision. ' +
-        `At most ${MAX_EDITS} edits. Files over ${maxReadBytes} bytes cannot be edited. ${writeAccessNote(config)}`,
+        `At most ${MAX_EDITS} edits. Files over ${maxReadBytes} bytes cannot be edited. ${DRY_RUN_NOTE} ${writeAccessNote(config)}`,
       inputSchema: z.object({
         ...workspaceShape(config),
         path: pathSchema,
         edits: z.array(editSchema).min(1).max(MAX_EDITS).describe('Edits to apply in order'),
         expected_revision: z.string().describe('Revision returned by read_file, edit_file, multi_edit_file, or write_file'),
+        dry_run: dryRunSchema,
       }),
       outputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ workspace, path, edits, expected_revision }, ctx) =>
+    async ({ workspace, path, edits, expected_revision, dry_run }, ctx) =>
       runTool(
-        { tool: 'multi_edit_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit },
+        { tool: 'multi_edit_file', workspace, path, dryRun: dry_run, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit },
         async (signal) => {
           const { guard, mode } = selectWorkspace(deps, workspace);
-          const result = await editTextFileMulti(
-            guard,
-            { mode, maxReadBytes, maxWriteBytes, signal },
-            {
-              path,
-              edits: edits.map((edit) => ({
-                oldString: edit.old_string,
-                newString: edit.new_string,
-                replaceAll: edit.replace_all,
-              })),
-              expectedRevision: expected_revision,
-            },
-          );
+          const options = { mode, maxReadBytes, maxWriteBytes, signal };
+          const params = {
+            path,
+            edits: edits.map((edit) => ({
+              oldString: edit.old_string,
+              newString: edit.new_string,
+              replaceAll: edit.replace_all,
+            })),
+            expectedRevision: expected_revision,
+          };
+          if (dry_run) return { result: { ...(await previewEditTextFileMulti(guard, options, params)) } };
+          const result = await editTextFileMulti(guard, options, params);
           return { result: { ...result }, bytesWritten: result.bytes_written };
         },
       ),

@@ -71,6 +71,17 @@ match는 decode된 문자열에 대한 정확한 비교다. 줄바꿈 정규화,
 - formatter integration
 - file revision history, rollback
 
+#### Amendment (2026-09-24, 2)
+
+"before/after diff 생성, write preview" 중 가장 작은 범위를 채택한다. `edit_file`과 `multi_edit_file`에 선택 인자 `dry_run`(기본 false)을 더한다.
+
+- **의미**: `dry_run: true`면 2절 1~4번과 4절 Amendment의 검사(read limit, binary, `expected_revision`, match, 크기, surrogate)를 쓰기 경로와 같은 code로 모두 실행하고, 쓰기(2절 5번)만 하지 않는다. 결과는 교체 횟수, 이 edit를 실제로 적용했을 때의 `revision`, before/after unified diff(`diff`, `diff_truncated`)다. 적용하려면 같은 `expected_revision`으로 `dry_run` 없이 다시 호출한다. 그 사이 파일이 바뀌면 `REVISION_CONFLICT`다.
+- **mode**: read-only workspace에서는 `dry_run`도 `READ_ONLY`로 실패한다. 쓰기가 없으니 막을 보안상 이유는 없지만, tool 단위 `READ_ONLY` 규칙, description, annotations를 인자 하나 때문에 예외로 만들지 않는다. 나중에 풀어도 기존 client를 깨지 않는다.
+- **호환**: `dry_run`이 없거나 false면 입력 의미와 출력이 v0.1.0과 같다. 출력 schema에는 dry run일 때만 나오는 선택 field가 더해진다. 4절 Amendment의 "`edit_file`은 v0.1.0 입력과 출력 그대로"는 이 선택 field만큼 완화된다.
+- **annotations**: tool 단위라 호출마다 바꿀 수 없으므로 `readOnlyHint: false`, `destructiveHint: true`를 유지한다. client가 dry run에도 쓰기 approval을 요구할 수 있다.
+
+diff는 외부 dependency 없이 교체 위치에서 직접 만든다. 세부 결정은 implementation notes M49~M50에 있다. `write_file` preview, 여러 파일 preview, approval flow(ADR-003)는 여전히 보류한다.
+
 ## 6. Consequences
 
 ### Positive

@@ -45,6 +45,22 @@ async function withPathLock<T>(key: string, task: () => Promise<T>): Promise<T> 
 }
 
 /**
+ * Encodes write content as UTF-8 under the write limit. Shared with the edit dry run so a
+ * preview fails exactly where the write would.
+ */
+export function encodeContent(content: string, maxWriteBytes: number): Buffer {
+  // Buffer.from would silently encode a lone surrogate as U+FFFD.
+  if (!content.isWellFormed()) {
+    throw new WorkspaceError('BINARY_FILE', 'content is not well-formed Unicode text (it contains a lone surrogate)');
+  }
+  const bytes = Buffer.from(content, 'utf8');
+  if (bytes.length > maxWriteBytes) {
+    throw new WorkspaceError('FILE_TOO_LARGE', `content is ${bytes.length} bytes; the write limit is ${maxWriteBytes} bytes`);
+  }
+  return bytes;
+}
+
+/**
  * Creates or replaces a UTF-8 text file.
  *
  * Existing files are replaced via temp file + fsync + rename after the current
@@ -60,17 +76,7 @@ export async function writeTextFile(
   if (options.mode !== 'read-write') {
     throw new WorkspaceError('READ_ONLY', 'the workspace is read-only; the operator must enable read-write mode');
   }
-  // Buffer.from would silently encode a lone surrogate as U+FFFD.
-  if (!params.content.isWellFormed()) {
-    throw new WorkspaceError('BINARY_FILE', 'content is not well-formed Unicode text (it contains a lone surrogate)');
-  }
-  const bytes = Buffer.from(params.content, 'utf8');
-  if (bytes.length > options.maxWriteBytes) {
-    throw new WorkspaceError(
-      'FILE_TOO_LARGE',
-      `content is ${bytes.length} bytes; the write limit is ${options.maxWriteBytes} bytes`,
-    );
-  }
+  const bytes = encodeContent(params.content, options.maxWriteBytes);
 
   const { absolutePath: lockKey } = await guard.resolveForWrite(params.path);
   return withPathLock(lockKey, async () => {

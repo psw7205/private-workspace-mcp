@@ -1,6 +1,7 @@
 import { WorkspaceError } from '../errors/errors.js';
+import { EditTracker, unifiedDiff } from './edit-diff.js';
 import { decodeTextFile, readRegularFile } from './file-reader.js';
-import { writeTextFile, type WriteFileOptions } from './file-writer.js';
+import { encodeContent, writeTextFile, type WriteFileOptions } from './file-writer.js';
 import type { PathGuard } from './path-guard.js';
 import { computeRevision } from './revision.js';
 
@@ -35,6 +36,21 @@ export interface MultiEditFileResult extends EditFileResult {
   edit_replacements: number[];
 }
 
+/** Dry-run result: nothing is written, and `revision` is what the edit would produce (M49). */
+export interface EditPreviewResult {
+  path: string;
+  dry_run: true;
+  replacements: number;
+  bytes_written: 0;
+  revision: string;
+  diff: string;
+  diff_truncated: boolean;
+}
+
+export interface MultiEditPreviewResult extends EditPreviewResult {
+  edit_replacements: number[];
+}
+
 /**
  * Replaces exact occurrences of `oldString` in an existing UTF-8 text file (ADR-002).
  *
@@ -46,13 +62,21 @@ export async function editTextFile(
   options: WriteFileOptions,
   params: EditFileParams,
 ): Promise<EditFileResult> {
-  const { path, replacements, bytes_written, revision } = await applyEditsToFile(
-    guard,
-    options,
-    { path: params.path, edits: [params], expectedRevision: params.expectedRevision },
-    false,
-  );
+  const { path, replacements, bytes_written, revision } = await writeEdits(guard, options, single(params), false);
   return { path, replacements, bytes_written, revision };
+}
+
+/**
+ * Runs every check of editTextFile, including the read-only mode check, without writing, and
+ * returns the would-be revision with a unified diff (M49, M50).
+ */
+export async function previewEditTextFile(
+  guard: PathGuard,
+  options: WriteFileOptions,
+  params: EditFileParams,
+): Promise<EditPreviewResult> {
+  const { edit_replacements: _, ...preview } = await previewEdits(guard, options, single(params), false);
+  return preview;
 }
 
 /**
@@ -66,15 +90,82 @@ export async function editTextFileMulti(
   options: WriteFileOptions,
   params: MultiEditFileParams,
 ): Promise<MultiEditFileResult> {
-  return applyEditsToFile(guard, options, params, true);
+  return writeEdits(guard, options, params, true);
 }
 
-async function applyEditsToFile(
+/** The dry run of editTextFileMulti (M49). */
+export async function previewEditTextFileMulti(
+  guard: PathGuard,
+  options: WriteFileOptions,
+  params: MultiEditFileParams,
+): Promise<MultiEditPreviewResult> {
+  return previewEdits(guard, options, params, true);
+}
+
+function single(params: EditFileParams): MultiEditFileParams {
+  return { path: params.path, edits: [params], expectedRevision: params.expectedRevision };
+}
+
+async function writeEdits(
   guard: PathGuard,
   options: WriteFileOptions,
   params: MultiEditFileParams,
   labelEdits: boolean,
 ): Promise<MultiEditFileResult> {
+  const { content, counts } = await applyEdits(guard, options, params, labelEdits);
+  const result = await writeTextFile(guard, options, {
+    path: params.path,
+    content,
+    expectedRevision: params.expectedRevision,
+    mustExist: true,
+  });
+  return {
+    path: result.path,
+    replacements: counts.reduce((sum, count) => sum + count, 0),
+    edit_replacements: counts,
+    bytes_written: result.bytes_written,
+    revision: result.revision,
+  };
+}
+
+async function previewEdits(
+  guard: PathGuard,
+  options: WriteFileOptions,
+  params: MultiEditFileParams,
+  labelEdits: boolean,
+): Promise<MultiEditPreviewResult> {
+  const { relativePath, original, content, counts, tracker } = await applyEdits(guard, options, params, labelEdits, true);
+  // The same final checks writeTextFile makes before it touches the file.
+  const bytes = encodeContent(content, options.maxWriteBytes);
+  const { diff, truncated } = unifiedDiff(relativePath, original, content, tracker as EditTracker);
+  return {
+    path: relativePath,
+    dry_run: true,
+    replacements: counts.reduce((sum, count) => sum + count, 0),
+    edit_replacements: counts,
+    bytes_written: 0,
+    revision: computeRevision(bytes),
+    diff,
+    diff_truncated: truncated,
+  };
+}
+
+interface AppliedEdits {
+  relativePath: string;
+  original: string;
+  content: string;
+  counts: number[];
+  /** Present when the caller asked to track the edits for a diff. */
+  tracker?: EditTracker;
+}
+
+async function applyEdits(
+  guard: PathGuard,
+  options: WriteFileOptions,
+  params: MultiEditFileParams,
+  labelEdits: boolean,
+  track = false,
+): Promise<AppliedEdits> {
   if (options.mode !== 'read-write') {
     throw new WorkspaceError('READ_ONLY', 'the workspace is read-only; the operator must enable read-write mode');
   }
@@ -110,7 +201,9 @@ async function applyEditsToFile(
     throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} changed since it was read; read it again and retry`);
   }
 
-  let content = decodeTextFile(bytes, relativePath);
+  const original = decodeTextFile(bytes, relativePath);
+  let content = original;
+  const tracker = track ? new EditTracker(original.length) : undefined;
   const counts: number[] = [];
   const earlier = (index: number) => (index > 0 ? ' after the earlier edits' : '');
   edits.forEach((edit, index) => {
@@ -138,6 +231,7 @@ async function applyEditsToFile(
         `${label(index)}the result would be at least ${minimumSize} bytes; the write limit is ${options.maxWriteBytes} bytes`,
       );
     }
+    tracker?.apply(parts, edit.oldString.length, edit.newString.length);
     content = parts.join(edit.newString);
     counts.push(replacements);
     // writeTextFile checks the final size exactly; intermediate results are held to the limit too.
@@ -152,17 +246,5 @@ async function applyEditsToFile(
     }
   });
 
-  const result = await writeTextFile(guard, options, {
-    path: params.path,
-    content,
-    expectedRevision: params.expectedRevision,
-    mustExist: true,
-  });
-  return {
-    path: result.path,
-    replacements: counts.reduce((sum, count) => sum + count, 0),
-    edit_replacements: counts,
-    bytes_written: result.bytes_written,
-    revision: result.revision,
-  };
+  return { relativePath, original, content, counts, ...(tracker ? { tracker } : {}) };
 }

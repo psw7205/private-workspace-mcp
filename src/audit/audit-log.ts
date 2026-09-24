@@ -12,6 +12,8 @@ export interface AuditRecord {
   workspace?: string;
   /** Path argument as sent by the client. */
   path?: string;
+  /** Set on edit_file and multi_edit_file previews, which never write (M49). */
+  dry_run?: true;
   ok: boolean;
   duration_ms: number;
   bytes_read?: number;

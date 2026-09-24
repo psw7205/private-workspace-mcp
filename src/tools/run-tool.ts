@@ -13,6 +13,8 @@ export interface RunToolOptions {
    */
   workspace?: unknown;
   path?: string;
+  /** Recorded as `dry_run: true` when set (M49). */
+  dryRun?: boolean;
   requestId: string | number;
   timeoutMs: number;
   audit: AuditSink;
@@ -40,6 +42,7 @@ export async function runTool<T extends Record<string, unknown>>(
     tool: options.tool,
     ...(typeof options.workspace === 'string' ? { workspace: options.workspace } : {}),
     ...(options.path !== undefined ? { path: options.path } : {}),
+    ...(options.dryRun ? { dry_run: true as const } : {}),
   };
   const elapsed = () => Math.round(performance.now() - startedAt);
 

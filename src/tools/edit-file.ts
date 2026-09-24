@@ -1,15 +1,16 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
-import { editTextFile } from '../filesystem/file-editor.js';
+import { editTextFile, previewEditTextFile } from '../filesystem/file-editor.js';
 import { runTool, selectWorkspace, type ToolDeps } from './run-tool.js';
-import { pathSchema, workspaceShape, writeAccessNote } from './schemas.js';
+import { DRY_RUN_NOTE, dryRunOutputShape, dryRunSchema, pathSchema, workspaceShape, writeAccessNote } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
   replacements: z.number(),
   bytes_written: z.number(),
   revision: z.string(),
+  ...dryRunOutputShape,
 });
 
 export function registerEditFile(server: McpServer, deps: ToolDeps): void {
@@ -24,7 +25,7 @@ export function registerEditFile(server: McpServer, deps: ToolDeps): void {
         '`old_string` must match the current content exactly (whitespace and line endings included) and occur once, ' +
         'unless `replace_all` is true; otherwise the edit fails with EDIT_NO_MATCH or EDIT_AMBIGUOUS and nothing changes. ' +
         'Pass the `revision` from read_file as `expected_revision`; the result returns the new revision for a follow-up edit. ' +
-        `Files over ${maxReadBytes} bytes cannot be edited. ${writeAccessNote(config)}`,
+        `Files over ${maxReadBytes} bytes cannot be edited. ${DRY_RUN_NOTE} ${writeAccessNote(config)}`,
       inputSchema: z.object({
         ...workspaceShape(config),
         path: pathSchema,
@@ -32,19 +33,28 @@ export function registerEditFile(server: McpServer, deps: ToolDeps): void {
         new_string: z.string().describe('Replacement text'),
         expected_revision: z.string().describe('Revision returned by read_file, edit_file, or write_file'),
         replace_all: z.boolean().default(false).describe('Replace every occurrence instead of requiring exactly one'),
+        dry_run: dryRunSchema,
       }),
       outputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ workspace, path, old_string, new_string, expected_revision, replace_all }, ctx) =>
-      runTool({ tool: 'edit_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {
-        const { guard, mode } = selectWorkspace(deps, workspace);
-        const result = await editTextFile(
-          guard,
-          { mode, maxReadBytes, maxWriteBytes, signal },
-          { path, oldString: old_string, newString: new_string, expectedRevision: expected_revision, replaceAll: replace_all },
-        );
-        return { result: { ...result }, bytesWritten: result.bytes_written };
-      }),
+    async ({ workspace, path, old_string, new_string, expected_revision, replace_all, dry_run }, ctx) =>
+      runTool(
+        { tool: 'edit_file', workspace, path, dryRun: dry_run, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit },
+        async (signal) => {
+          const { guard, mode } = selectWorkspace(deps, workspace);
+          const options = { mode, maxReadBytes, maxWriteBytes, signal };
+          const params = {
+            path,
+            oldString: old_string,
+            newString: new_string,
+            expectedRevision: expected_revision,
+            replaceAll: replace_all,
+          };
+          if (dry_run) return { result: { ...(await previewEditTextFile(guard, options, params)) } };
+          const result = await editTextFile(guard, options, params);
+          return { result: { ...result }, bytesWritten: result.bytes_written };
+        },
+      ),
   );
 }

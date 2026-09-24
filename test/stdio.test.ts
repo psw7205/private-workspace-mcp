@@ -115,18 +115,94 @@ describe('stdio server', () => {
       expect(byName.edit_file?.annotations?.destructiveHint).toBe(true);
       expect(byName.multi_edit_file?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
       expect(byName.multi_edit_file?.inputSchema.properties?.edits).toMatchObject({ type: 'array', minItems: 1, maxItems: 100 });
-      // v0.1.0 edit_file input stays as released.
+      // v0.1.0 edit_file input stays as released, plus the optional dry_run (M49).
       expect(Object.keys(byName.edit_file?.inputSchema.properties ?? {}).sort()).toEqual([
+        'dry_run',
         'expected_revision',
         'new_string',
         'old_string',
         'path',
         'replace_all',
       ]);
+      for (const name of ['edit_file', 'multi_edit_file']) {
+        expect(byName[name]?.inputSchema.properties?.dry_run, name).toMatchObject({ type: 'boolean', default: false });
+        expect(byName[name]?.inputSchema.required ?? [], name).not.toContain('dry_run');
+        expect(byName[name]?.outputSchema?.required, name).toEqual(expect.arrayContaining(['bytes_written', 'revision']));
+      }
       for (const tool of tools) expect(tool.inputSchema.properties ?? {}).not.toHaveProperty('workspace');
       for (const name of ['write_file', 'edit_file', 'multi_edit_file']) {
         expect(byName[name]?.description, name).toMatch(/Fails with READ_ONLY unless the operator enabled read-write mode\.$/);
       }
+    });
+
+    it('previews edits with dry_run without writing and audits the flag', async () => {
+      const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'src/index.ts' } }));
+      const preview = await session.client.callTool({
+        name: 'edit_file',
+        arguments: { path: 'src/index.ts', old_string: 'export', new_string: 'import', expected_revision: read.revision, dry_run: true },
+      });
+      expect(preview.structuredContent).toEqual({
+        path: 'src/index.ts',
+        dry_run: true,
+        replacements: 1,
+        bytes_written: 0,
+        revision: expect.stringMatching(/^sha256:/),
+        diff: '--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-export {};\n+import {};\n',
+        diff_truncated: false,
+      });
+      expectNoHostPath(JSON.stringify(preview), fixture);
+
+      const multiPreview = parseText(
+        await session.client.callTool({
+          name: 'multi_edit_file',
+          arguments: {
+            path: 'src/index.ts',
+            expected_revision: read.revision,
+            dry_run: true,
+            edits: [
+              { old_string: 'export', new_string: 'import' },
+              { old_string: '{}', new_string: '{ x }' },
+            ],
+          },
+        }),
+      );
+      expect(multiPreview).toMatchObject({ dry_run: true, replacements: 2, edit_replacements: [1, 1], bytes_written: 0 });
+      expect(multiPreview.diff).toContain('+import { x };\n');
+
+      const failed = await session.client.callTool({
+        name: 'edit_file',
+        arguments: { path: 'src/index.ts', old_string: 'missing', new_string: 'x', expected_revision: read.revision, dry_run: true },
+      });
+      expect(parseText(failed).error.code).toBe('EDIT_NO_MATCH');
+
+      const after = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'src/index.ts' } }));
+      expect(after).toMatchObject({ content: 'export {};\n', revision: read.revision });
+
+      // Without dry_run the output keeps the v0.1.0 shape.
+      const applied = await session.client.callTool({
+        name: 'edit_file',
+        arguments: { path: 'src/index.ts', old_string: 'export', new_string: 'import', expected_revision: read.revision },
+      });
+      expect(Object.keys(applied.structuredContent ?? {}).sort()).toEqual(['bytes_written', 'path', 'replacements', 'revision']);
+      expect((applied.structuredContent as { revision: string }).revision).toBe((preview.structuredContent as { revision: string }).revision);
+      await session.client.callTool({
+        name: 'write_file',
+        arguments: { path: 'src/index.ts', content: 'export {};\n', expected_revision: (applied.structuredContent as { revision: string }).revision },
+      });
+
+      const records = session
+        .stderr()
+        .split('\n')
+        .filter((line) => line.startsWith('{'))
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.path === 'src/index.ts' && ['edit_file', 'multi_edit_file'].includes(record.tool));
+      expect(records.map((record) => [record.tool, record.ok, record.dry_run, record.bytes_written])).toEqual([
+        ['edit_file', true, true, undefined],
+        ['multi_edit_file', true, true, undefined],
+        ['edit_file', false, true, undefined],
+        ['edit_file', true, undefined, 11],
+      ]);
+      expect(session.stderr()).not.toContain('import {}');
     });
 
     it('describes the workspace without exposing the host path', async () => {
@@ -540,6 +616,18 @@ describe('stdio server', () => {
     try {
       const result = await session.client.callTool({ name: 'write_file', arguments: { path: 'new.txt', content: 'x' } });
       expect(parseText(result).error.code).toBe('READ_ONLY');
+      // dry_run does not lift read-only mode (M49).
+      const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'README.md' } }));
+      for (const [name, args] of [
+        ['edit_file', { old_string: 'readme', new_string: 'x' }],
+        ['multi_edit_file', { edits: [{ old_string: 'readme', new_string: 'x' }] }],
+      ] as const) {
+        const preview = await session.client.callTool({
+          name,
+          arguments: { path: 'README.md', expected_revision: read.revision, dry_run: true, ...args },
+        });
+        expect(parseText(preview).error.code, name).toBe('READ_ONLY');
+      }
     } finally {
       await session.client.close();
     }
