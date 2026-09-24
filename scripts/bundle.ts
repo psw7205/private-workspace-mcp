@@ -2,7 +2,8 @@
  * Builds the release artifact: one ESM file that runs on Node 26 without node_modules.
  *
  *   release/index.mjs, index.mjs.map   src/index.ts with its runtime dependencies inlined
- *   release/THIRD_PARTY_LICENSES.txt   license text of every bundled package
+ *   release/THIRD_PARTY_LICENSES.txt   license text of every bundled package, including ones
+ *                                      pre-bundled inside a dependency's dist
  *   release/SHA256SUMS                 checksums in `shasum -a 256 -c` format
  *
  * Run with `pnpm bundle`.
@@ -12,60 +13,45 @@ import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { build, type Metafile } from 'esbuild';
+import { build, type BuildOptions, type Metafile } from 'esbuild';
+
+import { type DetectedPackage, detectPackages, thirdPartyLicenses } from './third-party-licenses.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = path.join(projectRoot, 'release');
+export const noticesDir = path.join(projectRoot, 'scripts', 'third-party-notices');
 
-/** Package directories (relative to the project root) that contributed code to the bundle. */
-function bundledPackageDirs(metafile: Metafile): string[] {
-  const dirs = new Set<string>();
-  for (const input of Object.keys(metafile.inputs)) {
-    const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(input);
-    if (match?.[1]) dirs.add(match[1]);
-  }
-  return [...dirs];
-}
+export const releaseBuildOptions = {
+  absWorkingDir: projectRoot,
+  entryPoints: ['src/index.ts'],
+  outfile: 'release/index.mjs',
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: 'node26',
+  sourcemap: 'linked',
+  metafile: true,
+  logLevel: 'warning',
+} satisfies BuildOptions;
 
-async function thirdPartyLicenses(packageDirs: string[]): Promise<string> {
-  const sections: Array<{ name: string; text: string }> = [];
-  for (const dir of packageDirs) {
-    const absDir = path.join(projectRoot, dir);
-    const pkg = JSON.parse(await readFile(path.join(absDir, 'package.json'), 'utf8')) as {
-      name: string;
-      version: string;
-      license?: string;
-    };
-    const licenseFiles = (await readdir(absDir)).filter((file) => /^(licen[cs]e|notice|copying)/i.test(file)).sort();
-    // Redistributing bundled code requires its notice; refuse to ship without one.
-    if (licenseFiles.length === 0) throw new Error(`${pkg.name}@${pkg.version} has no license file`);
-    const texts = await Promise.all(licenseFiles.map((file) => readFile(path.join(absDir, file), 'utf8')));
-    sections.push({
-      name: pkg.name,
-      text: `${pkg.name}@${pkg.version} (${pkg.license ?? 'unknown'})\n\n${texts.map((text) => text.trim()).join('\n\n')}\n`,
-    });
-  }
-  sections.sort((a, b) => a.name.localeCompare(b.name));
-  return sections.map((section) => section.text).join(`\n${'-'.repeat(72)}\n\n`);
+/**
+ * Packages whose code is in the bundle. Metafile inputs are relative to the project root and map
+ * sources to the map's directory. The map also lists what upstream dist files had inlined before
+ * esbuild saw them (M51).
+ */
+export function bundledPackages(metafile: Metafile, mapText: string): DetectedPackage[] {
+  const map = JSON.parse(mapText) as { sourceRoot?: string; sources: string[] };
+  return detectPackages([
+    ...Object.keys(metafile.inputs).map((input) => path.resolve(projectRoot, input)),
+    ...map.sources.map((source) => path.resolve(outDir, map.sourceRoot ?? '', source)),
+  ]);
 }
 
 async function main(): Promise<void> {
   await rm(outDir, { recursive: true, force: true });
-  const { metafile } = await build({
-    absWorkingDir: projectRoot,
-    entryPoints: ['src/index.ts'],
-    outfile: 'release/index.mjs',
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    target: 'node26',
-    sourcemap: 'linked',
-    metafile: true,
-    logLevel: 'warning',
-  });
-
-  const packageDirs = bundledPackageDirs(metafile);
-  await writeFile(path.join(outDir, 'THIRD_PARTY_LICENSES.txt'), await thirdPartyLicenses(packageDirs));
+  const { metafile } = await build(releaseBuildOptions);
+  const packages = bundledPackages(metafile, await readFile(path.join(outDir, 'index.mjs.map'), 'utf8'));
+  await writeFile(path.join(outDir, 'THIRD_PARTY_LICENSES.txt'), await thirdPartyLicenses(packages, noticesDir));
 
   const files = (await readdir(outDir)).sort();
   const sums: string[] = [];
@@ -77,10 +63,12 @@ async function main(): Promise<void> {
   }
   await writeFile(path.join(outDir, 'SHA256SUMS'), sums.join(''));
 
-  console.log(`bundled ${packageDirs.length} packages into release/: ${[...files, 'SHA256SUMS'].join(', ')}`);
+  console.log(`bundled ${packages.length} packages into release/: ${[...files, 'SHA256SUMS'].join(', ')}`);
 }
 
-main().catch((error: unknown) => {
-  console.error('[bundle] FAIL', error);
-  process.exitCode = 1;
-});
+if (import.meta.main) {
+  main().catch((error: unknown) => {
+    console.error('[bundle] FAIL', error);
+    process.exitCode = 1;
+  });
+}

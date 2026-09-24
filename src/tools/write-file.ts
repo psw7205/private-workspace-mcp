@@ -21,7 +21,7 @@ export function registerWriteFile(server: McpServer, deps: ToolDeps): void {
       title: 'Write file',
       description:
         'Create a UTF-8 text file or replace an existing one with the full new content. ' +
-        'To change part of an existing file, prefer edit_file. ' +
+        'To change part of an existing file, prefer edit_file or multi_edit_file. ' +
         'To replace an existing file, first read_file it and pass its `revision` as `expected_revision`; the write fails with REVISION_CONFLICT if the file changed since. ' +
         'To create a new file, omit `expected_revision`; missing parent directories are created. ' +
         `Content is limited to ${maxWriteBytes} bytes, and files over ${maxReadBytes} bytes cannot be replaced. ` +

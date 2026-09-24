@@ -31,7 +31,7 @@ export function registerEditFile(server: McpServer, deps: ToolDeps): void {
         path: pathSchema,
         old_string: z.string().min(1).describe('Exact text to replace'),
         new_string: z.string().describe('Replacement text'),
-        expected_revision: z.string().describe('Revision returned by read_file, edit_file, or write_file'),
+        expected_revision: z.string().describe('Revision returned by read_file, edit_file, multi_edit_file, or write_file'),
         replace_all: z.boolean().default(false).describe('Replace every occurrence instead of requiring exactly one'),
         dry_run: dryRunSchema,
       }),
