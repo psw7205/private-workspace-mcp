@@ -111,7 +111,7 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 - **TOCTOU**: 경로 검증과 실제 open 사이에 로컬 프로세스가 중간 directory를 symlink로 바꾸면 우회할 수 있다. Node에는 `openat2(RESOLVE_BENEATH)`가 없다. 마지막 component는 `O_NOFOLLOW`로 open해 줄이지만, 최종 경계는 ADR 11대로 OS 권한이다.
 - **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
 - **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
-- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 test suite를 실행한다. 첫 실행에서 오류 code 차이 1건이 나와 M28로 고쳤다.
+- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 test suite를 실행한다. 첫 실행에서 오류 code 차이 1건이 나와 M28로 고쳤고, M28 반영 후 재실행에서 통과했다(6절).
 - **prompt injection을 통한 write**: read-write 모드에서 model이 읽은 파일에 심어진 지시가 `write_file`·`edit_file` 호출로 이어질 수 있다. revision은 model도 `read_file`로 얻으므로 방어가 아니다. 서버는 read-only 기본값과 `destructiveHint`만 제공하고, 승인은 client 설정(README)에 맡긴다. 피해 복구 수단(revision history, rollback)은 PRD Phase 2 범위다.
 - **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
 
@@ -162,7 +162,9 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 - Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(345), build 통과. Node 24 시절에는 root 사용자로도 확인
 - ChatGPT UI (2026-09-23): ChatGPT 웹 Developer mode에서 인증 없음으로 만든 Secure MCP Tunnel connector 경유로 hosted `tools/call`을 확인했다(PRD 15-1). `get_workspace_info`, `list_directory`, `read_file`이 성공했고, `write_file`은 `read_file`로 받은 revision을 넘겨 기존 내용을 보존한 채 항목을 추가했다. `.env` read는 `PATH_BLOCKED`로 거부됐고 message에 host 경로가 없었다. audit 파일에는 7건이 권한 `0600`으로 기록됐다. connector를 OAuth로 만들면 ChatGPT가 "MCP server ... does not implement OAuth" 오류를 내며, 이때 요청은 child까지 오지 않는다
 - container 격리 (2026-09-23): `docker run -i --network none --read-only -u 12345:12345`(passwd entry 없음, `HOME=/`)로 `node:26-bookworm`에서 stdio로 직접 호출했다. startup이 M27 검사를 통과했고 `read_file`, `write_file`(새 파일 생성)이 성공했으며 audit 파일이 권한 `0600`으로 기록됐다
-- release bundle (2026-09-23): `pnpm bundle`이 4개 package(`@modelcontextprotocol/server`, `@modelcontextprotocol/core`, `zod`, `ignore`)를 묶어 891 KB `index.mjs`를 만들었다. 두 번 build한 `SHA256SUMS`가 같았다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 16개와 `pnpm e2e:tunnel`(legacy·modern 양쪽)이 통과했고, repo 밖 `node_modules`가 없는 directory에서도 실행됐다. release workflow는 actionlint만 통과했고 실제 tag 실행은 아직 하지 않았다
+- release bundle (2026-09-23): `pnpm bundle`이 4개 package(`@modelcontextprotocol/server`, `@modelcontextprotocol/core`, `zod`, `ignore`)를 묶어 891 KB `index.mjs`를 만들었다. 두 번 build한 `SHA256SUMS`가 같았다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 16개와 `pnpm e2e:tunnel`(legacy·modern 양쪽)이 통과했고, repo 밖 `node_modules`가 없는 directory에서도 실행됐다
+- CI (2026-09-23): M28 반영 후 commit `4908af0`의 CI run 35818539212가 ubuntu-latest, macos-latest, windows-latest 모두 통과했다
+- release `v0.1.0` (2026-09-23): tag push로 release workflow run 35818627892가 성공했고, GitHub Release에 `index.mjs`, `index.mjs.map`, `SHA256SUMS`, `THIRD_PARTY_LICENSES.txt`가 올라갔다. 2026-09-24에 repo 밖 임시 directory로 `gh release download v0.1.0`을 받아 `shasum -a 256 -c SHA256SUMS`(3개 파일 OK)와 파일별 `gh attestation verify --repo psw7205/private-workspace-mcp`(3개 모두 통과)를 확인했다. attestation 하나가 3개 파일을 subject로 담고 signer는 `release.yml@refs/tags/v0.1.0`이다. 내용을 바꾼 `index.mjs`는 verify가 실패했다
 - multi-workspace (2026-09-24, ADR-008): `pnpm test` 376개 통과. stdio test로 `WORKSPACE_ROOTS`의 `workspace` enum schema, workspace 간 격리, workspace별 escape·deny 거부, 모르는 이름과 누락 거부, audit의 `workspace` field, single mode schema에 `workspace`가 없음을 확인했다. `pnpm e2e:tunnel`에 multi case를 추가해 `tunnel-client` 0.0.14 `dev proxy` 경유(modern era)로 같은 항목이 통과했다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 23개도 통과했다. hosted(ChatGPT UI) 경로는 아직 확인하지 않았다
 - 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
@@ -176,4 +178,3 @@ PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
 - README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
 - ChatGPT UI에서 `WORKSPACE_ROOTS` connector로 model이 `workspace` 인자를 골라 호출하는지 확인(ADR-008)
-- M28 반영 후 CI Windows job 재실행 결과 확인. 첫 실행(2026-09-23)은 ubuntu·macOS 통과, Windows는 `NOT_A_DIRECTORY` test 1건 실패(M28)
