@@ -41,6 +41,8 @@ WORKSPACE_ROOTS=api=/abs/path/api,web=/abs/path/web
 
 > **Amendment (2026-09-24):** multi mode의 `get_workspace_info`는 `{ workspaces: [{ name, mode }], platform, limits }`를 반환한다. mode가 섞이면 top-level `mode` 하나로는 맞는 값이 없고, 어느 값을 넣어도 model이 잘못 판단할 수 있어 뺀다. `write_file`과 `edit_file`의 description은 startup 시점에 쓰기 가능한 workspace 이름을 적는다. annotations는 바꾸지 않는다. single mode(`WORKSPACE_ROOT`)의 schema와 출력은 그대로다.
 
+> **Amendment (2026-09-24, 2):** `multi_edit_file`(ADR-002 4절 Amendment)이 추가되어 path를 받는 tool은 7개다. multi mode에서는 7개 모두 필수 인자 `workspace`를 받는다. `multi_edit_file` description도 `write_file`·`edit_file`과 같이 쓰기 가능한 workspace 이름을 적는다.
+
 ### 2.3 내부 구조
 
 * workspace마다 `PathGuard`를 만들고 tool은 `workspace` 인자로 guard를 고른다. filesystem 모듈은 guard 하나만 받는 지금 구조를 유지하므로 containment와 deny 규칙(AGENTS.md 보안 불변식 1~3)은 workspace마다 그대로 적용된다.

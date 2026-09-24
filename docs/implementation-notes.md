@@ -96,9 +96,11 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 | M41 | 적용 규칙 | edit를 순서대로 decode된 content에 적용하고, 뒤 edit는 앞 edit 결과에 match. 개수는 1~100(`MAX_EDITS`, schema와 core 양쪽). 실패 시 파일 무변경, message 앞에 `edits[i]: `(workspace 상대 경로만, `old_string` 내용은 넣지 않음). 개수 위반은 빈 `old_string`처럼 `EDIT_NO_MATCH`. 각 edit는 결과 문자열을 만들기 전에 `현재 길이 + 교체 횟수 × (new_string 길이 − old_string 길이)`(UTF-16 code unit)가 `max write bytes`를 넘으면 `FILE_TOO_LARGE`(`edit_file`도 적용). UTF-8 byte 수는 code unit 수 이상이라 들어갈 결과를 거부하지 않음. 마지막을 뺀 중간 결과는 만든 뒤 byte 수로 다시 검사하고, 최종 결과는 `writeTextFile`이 검사 | 사전 검사가 없으면 1 MiB 파일의 `replace_all` 한 번이 쓰기 전에 수백 MB 문자열을 만들고, V8 문자열 길이 상한을 넘으면 `RangeError`로 `INTERNAL_ERROR`가 됨. edit를 이어 붙이면 기하급수로 커짐. 새 error code를 만들지 않음 |
 | M42 | surrogate 경계 | 모든 edit의 `old_string`·`new_string`이 well-formed가 아니면 `BINARY_FILE`(`edit_file`도 적용). 이 검사는 `resolveForWrite` 뒤에 해서 deny·escape 대상 경로는 입력 text와 무관하게 `PATH_BLOCKED` 등 경로 오류가 먼저 나옴. 최종 content 검사(M25)는 그대로 둠 | decode된 content는 well-formed이므로 well-formed `old_string`은 code point 경계에서만 match한다. 따라서 중간 결과도 모두 well-formed다. 최종 검사만으로는 앞 edit가 쪼갠 pair를 뒤 edit가 다시 붙이는 경우나 `\ude00\ud83d`처럼 두 pair에 걸친 match를 막지 못했음 |
 
+`multi_edit_file`의 description 마지막 문장과 workspace·mode 선택은 `write_file`·`edit_file`과 같이 M38·M39를 따른다.
+
 ### 1.3 구조 조정
 
-- ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
+- ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다(M39 이후 workspace마다 `Workspace.mode` 하나). 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
 - TypeScript 7 기본값(`strict` true, `rootDir` `./`, `types` `[]`)에 맞춰 tsconfig에서 중복 옵션을 제거했다. `types: ["node"]`는 TS 7에서 기본값이 `[]`가 되어 명시가 필수다. `target`/`lib`는 7.x minor에서 기본값이 바뀌어도 build 출력이 흔들리지 않도록 `ES2025`로 명시한다.
 - ADR 7에 없는 `filesystem/directory-lister.ts`와 `tools/run-tool.ts`(timeout, error 변환, audit을 담당하는 공통 wrapper)를 추가한다.
 
@@ -110,7 +112,7 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 | `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,...`. 각 root에 `WORKSPACE_ROOT`와 같은 검사, 겹침 거부(M32~M34). `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓰면 거부 |
 | `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write`. `WORKSPACE_ROOTS`에서 `WORKSPACE_READ_WRITE` 없이 쓰면 모든 workspace에 적용 |
 | `WORKSPACE_READ_WRITE` | (없음) | `WORKSPACE_ROOTS`에서 read-write로 둘 workspace 이름 목록(`,` 구분). 나머지는 read-only. `WORKSPACE_ROOT`·`WORKSPACE_MODE`와 함께 쓰거나 없는 이름·중복·빈 항목이 있으면 거부(M37) |
-| `WORKSPACE_NAME` | root basename | `get_workspace_info`에 노출되는 이름 |
+| `WORKSPACE_NAME` | root basename | `get_workspace_info`에 노출되는 이름(`WORKSPACE_ROOT` 전용) |
 | `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이 크기를 넘는 파일은 read 거부 |
 | `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | UTF-8 기준 write content 최대 크기 |
 | `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 1회 응답의 최대 entry 수 |
@@ -129,7 +131,7 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 - **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
 - **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
 - **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 test suite를 실행한다. 첫 실행에서 오류 code 차이 1건이 나와 M28로 고쳤고, M28 반영 후 재실행에서 통과했다(6절).
-- **prompt injection을 통한 write**: read-write 모드에서 model이 읽은 파일에 심어진 지시가 `write_file`·`edit_file` 호출로 이어질 수 있다. revision은 model도 `read_file`로 얻으므로 방어가 아니다. 서버는 read-only 기본값과 `destructiveHint`만 제공하고, 승인은 client 설정(README)에 맡긴다. 피해 복구 수단(revision history, rollback)은 PRD Phase 2 범위다.
+- **prompt injection을 통한 write**: read-write 모드에서 model이 읽은 파일에 심어진 지시가 `write_file`·`edit_file`·`multi_edit_file` 호출로 이어질 수 있다. revision은 model도 `read_file`로 얻으므로 방어가 아니다. 서버는 read-only 기본값과 `destructiveHint`만 제공하고, 승인은 client 설정(README)에 맡긴다. 피해 복구 수단(revision history, rollback)은 PRD Phase 2 범위다.
 - **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
 
 ## 4. 알려진 제약: stdio connection의 protocol era pin
@@ -192,8 +194,8 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은 구현하지 않았다. MVP 구현 중 추가로 나온 항목은 다음과 같다.
 
 - API credit을 충전한 뒤 Responses API 경로의 `tools/call` 확인
-- Phase 2·3에서 보류한 항목: line/range 교체, diff·미리보기, regex 검색(선형 시간 엔진 필요), 문자 class·escape가 있는 glob. ChatGPT UI에서 새 tool 3개와 `multi_edit_file` 직접 확인
+- Phase 2·3에서 보류한 항목: line/range 교체, diff·미리보기, 여러 파일에 걸친 bulk edit, regex 검색(선형 시간 엔진 필요), 문자 class·escape가 있는 glob
 - 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
 - README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
-- ChatGPT UI에서 `WORKSPACE_ROOTS` connector로 model이 `workspace` 인자를 골라 호출하는지 확인(ADR-008). `WORKSPACE_READ_WRITE`로 mode를 섞었을 때 model이 description을 보고 쓰기 가능한 workspace를 고르는지도 함께 확인(M38)
+- ChatGPT UI(hosted) 확인: `edit_file`·`find_files`·`search_text`·`multi_edit_file` 호출, `WORKSPACE_ROOTS` connector에서 model이 `workspace` 인자를 고르는지(ADR-008), `WORKSPACE_READ_WRITE`로 mode를 섞었을 때 description을 보고 쓰기 가능한 workspace를 고르는지(M38). 절차는 [`hosted-verification.md`](hosted-verification.md), 결과는 6절에 기록

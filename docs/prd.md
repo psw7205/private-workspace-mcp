@@ -640,6 +640,8 @@ MVP 범위와 분리해서 단계적으로 진행한다.
 
 > **Amendment (2026-09-23):** exact-match `edit_file`을 구현한다(ADR-002). 나머지 항목은 보류한다.
 
+> **Amendment (2026-09-24):** 한 파일 안의 여러 exact-match 교체를 원자적으로 적용하는 `multi_edit_file`을 구현한다(ADR-002 4절 Amendment, implementation notes M40~M42). 위 "bulk edit transaction" 중 한 파일 범위만 해당하고, 여러 파일에 걸친 transaction과 나머지 항목은 여전히 보류한다.
+
 ---
 
 ## Phase 3 — Better File Intelligence
@@ -794,6 +796,8 @@ workspace C
 * rate limiting
 
 을 지원한다.
+
+> **Amendment (2026-09-24):** 첫 단계로 workspace별 write 허용만 구현한다. `WORKSPACE_ROOTS`와 함께 `WORKSPACE_READ_WRITE`에 나열한 workspace만 쓸 수 있고 나머지는 read-only다(ADR-008 2.1절 Amendment, implementation notes M37~M39). per-tool·per-path·per-client policy와 나머지 항목은 보류한다.
 
 ---
 

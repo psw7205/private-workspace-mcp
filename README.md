@@ -1,6 +1,6 @@
 # Private Workspace MCP
 
-private 머신의 workspace 하나를 ChatGPT 같은 원격 MCP client에 작고 감사 가능한 filesystem tool로 노출하는 stdio MCP 서버다. OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 실행하므로 public HTTP listener가 없다.
+private 머신의 workspace(하나 또는 `WORKSPACE_ROOTS`로 여러 개)를 ChatGPT 같은 원격 MCP client에 작고 감사 가능한 filesystem tool로 노출하는 stdio MCP 서버다. OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 실행하므로 public HTTP listener가 없다.
 
 ```text
 ChatGPT / Responses API
@@ -56,7 +56,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `INVALID_PATH` | 경로 문법 오류, symlink 대상에 쓰기, 깨진 symlink 아래에 쓰기 |
 | `FILE_NOT_FOUND` / `NOT_A_FILE` / `NOT_A_DIRECTORY` | 대상 상태 불일치 |
 | `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일, lone surrogate가 든 write content나 `old_string`/`new_string` |
-| `READ_ONLY` | read-only mode에서 write 시도 |
+| `READ_ONLY` | read-only workspace에 write 시도(`write_file`·`edit_file`·`multi_edit_file`) |
 | `REVISION_CONFLICT` | 읽은 뒤 파일이 바뀜, 이미 존재하는 파일을 revision 없이 생성 시도 |
 | `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS` | `edit_file`·`multi_edit_file`의 `old_string`이 없음, 여러 번 나오는데 `replace_all`이 아님 |
 | `PERMISSION_DENIED` / `TIMEOUT` / `INTERNAL_ERROR` | OS 권한, 시간 초과, 기타 (상세는 audit log에만) |
@@ -66,7 +66,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 - **workspace 고정**: root는 서버 설정(`WORKSPACE_ROOT` 또는 `WORKSPACE_ROOTS`)으로만 정하고 startup 시 realpath로 고정한다. MCP Roots는 쓰지 않는다. root가 사실상 sandbox 경계이므로 filesystem root, home directory, home의 상위 directory는 startup에서 거부한다. 여러 root는 서로 겹칠 수 없다. agent 전용 directory를 root로 쓴다.
 - **`PathGuard`**: workspace마다 하나다. 입력 문법 검사(`..`, 절대/drive/UNC 경로, Windows alias 거부) 후 realpath로 canonical 경로를 구해 containment를 판정한다. 문자열 prefix 비교는 쓰지 않는다.
 - **민감 파일 deny**: `.env`, `.env.*`, `*.pem`, `*.key`, `.ssh`, `.aws`, `.gnupg`, `.npmrc`, `.netrc`, `credentials*`, `secret*`, `.git`, `.git-credentials`, `service-account*.json`, `id_rsa*`, `id_ed25519*`, `*.tfstate`, `*.tfstate.*`, `.kube`, `kubeconfig*`, `.docker`, `.pypirc`, `*.p12`, `*.pfx`. 입력 경로와 canonical 경로 양쪽에 case-insensitive로 적용한다. 운영자는 추가만 할 수 있다.
-- **안전한 write**: 기본 read-only. `WORKSPACE_ROOTS`면 `WORKSPACE_READ_WRITE`에 나열한 workspace만 쓸 수 있다. 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
+- **안전한 write**: 기본 read-only. `WORKSPACE_ROOTS`면 `WORKSPACE_READ_WRITE`에 나열한 workspace만 쓸 수 있다(`WORKSPACE_READ_WRITE` 없이 `WORKSPACE_MODE=read-write`면 모든 workspace). 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
 - **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, 성공 여부, 소요 시간, bytes, error code). 파일 내용과 secret은 기록하지 않는다.
 
 path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자나 container 같은 OS 권한이다(ADR-001 §11). 잔여 위험은 implementation notes 3절에 있다.
@@ -178,10 +178,10 @@ Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspa
 주의:
 
 - tunnel ID 하나에는 `tunnel-client` instance 하나만 실행한다. stdio child가 instance마다 따로 뜨기 때문이다.
-- 한 머신의 repo 여러 개는 tunnel 하나로 노출한다. `--mcp-command`의 `WORKSPACE_ROOT=<project>`를 `WORKSPACE_ROOTS=api=<repo-a>,web=<repo-b>`로 바꾸면 child 하나가 모든 repo를 다루고 model은 tool 인자 `workspace`로 repo를 고른다(ADR-008). repo를 더하거나 빼면 tool schema가 바뀌므로 daemon을 다시 띄우고 connector를 Refresh한다. 일부 repo만 쓰게 하려면 `WORKSPACE_MODE=read-write` 대신 `WORKSPACE_READ_WRITE=api`처럼 이름을 나열한다. 나머지 repo는 read-only이고 `write_file`·`edit_file` description에 쓰기 가능한 이름이 적힌다. 이 tunnel을 쓸 수 있는 사용자는 모든 repo에 접근한다.
+- 한 머신의 repo 여러 개는 tunnel 하나로 노출한다. `--mcp-command`의 `WORKSPACE_ROOT=<project>`를 `WORKSPACE_ROOTS=api=<repo-a>,web=<repo-b>`로 바꾸면 child 하나가 모든 repo를 다루고 model은 tool 인자 `workspace`로 repo를 고른다(ADR-008). repo를 더하거나 빼면 tool schema가 바뀌므로 daemon을 다시 띄우고 connector를 Refresh한다. 일부 repo만 쓰게 하려면 `WORKSPACE_MODE=read-write` 대신 `WORKSPACE_READ_WRITE=api`처럼 이름을 나열한다. 나머지 repo는 read-only이고 `write_file`·`edit_file`·`multi_edit_file` description에 쓰기 가능한 이름이 적힌다. `WORKSPACE_READ_WRITE`는 `WORKSPACE_MODE`와 함께 쓸 수 없으므로 `WORKSPACE_MODE=read-write`는 지운다. 이 tunnel을 쓸 수 있는 사용자는 모든 repo에 접근한다.
 - repo마다 mode나 접근할 사람이 달라야 할 때만 tunnel, profile, daemon, connector를 따로 둔다. profile마다 `health.listen_addr` port(`8080`, `8081`, …)와 `WORKSPACE_AUDIT_LOG` 파일을 다르게 하고, 실행 명령의 `--profile`만 바꾼다. `tunnel-client`의 channel별 command(`--mcp.command channel=...`)는 OpenAI 쪽에서 channel을 고를 수단이 없어 쓰지 않는다.
 - 공통 상위 directory를 root로 잡으면 다른 repo까지 노출되고, root 밖을 가리키는 symlink는 `PATH_OUTSIDE_WORKSPACE`로 거부된다.
-- 여러 머신에서 쓸 때는 머신마다 tunnel과 connector를 따로 만든다. 같은 tunnel을 여러 머신에서 쓰려면 한 번에 한 머신에서만 daemon을 띄운다. 이때 connector는 그대로 쓸 수 있지만, 연결되는 workspace는 그 머신 profile의 `WORKSPACE_ROOT`다.
+- 여러 머신에서 쓸 때는 머신마다 tunnel과 connector를 따로 만든다. 같은 tunnel을 여러 머신에서 쓰려면 한 번에 한 머신에서만 daemon을 띄운다. 이때 connector는 그대로 쓸 수 있지만, 연결되는 workspace는 그 머신 profile의 `WORKSPACE_ROOT`(또는 `WORKSPACE_ROOTS`)다.
 - MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 tunnel-client에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로, 그럴 때는 `tunnel-client`를 재시작한다(implementation notes 4절).
 
 ## 개발과 검증
@@ -194,7 +194,9 @@ pnpm bundle        # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS
 pnpm e2e:tunnel    # tunnel-client dev proxy 경유 e2e (tunnel-client 필요, OpenAI credential 불필요)
 ```
 
-`pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, tunnel-client 종료 시 child 정리를 확인한다.
+`pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, `WORKSPACE_ROOTS`·`WORKSPACE_READ_WRITE` multi case, tunnel-client 종료 시 child 정리를 확인한다.
+
+ChatGPT UI(hosted) 경로로 미출시 기능을 확인하는 수동 절차는 [`docs/hosted-verification.md`](docs/hosted-verification.md)에 있다.
 
 `TEST_SERVER_ENTRY=release/index.mjs`를 주면 `test/stdio.test.ts`와 `pnpm e2e:tunnel`이 source 대신 bundle을 실행한다.
 
