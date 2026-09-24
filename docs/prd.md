@@ -845,6 +845,8 @@ workspace
 * `doctor` command
 * dry-run mode
 
+> **Amendment (2026-09-24):** configuration validation의 첫 단계로 서버 entry에 `--check`(startup과 같은 검증 후 해석된 설정을 stderr에 요약하고 종료)와 `--version`을 추가한다. 모르는 인자는 exit 2로 거부한다(implementation notes M47~M48). health endpoint, metrics, `doctor` command, dry-run mode와 나머지 항목은 보류한다.
+
 ---
 
 ## Phase 11 — Multi-workspace

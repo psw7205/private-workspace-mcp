@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, realpath, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,6 +42,21 @@ async function connect(env: Record<string, string>, versionNegotiation?: ClientO
   );
   await client.connect(transport);
   return { client, stderr: () => stderr };
+}
+
+/** Runs the entry with CLI arguments to completion; stdin stays open so a serve-mode regression times out. */
+async function runCli(args: string[], env: Record<string, string> = {}) {
+  const child = spawn(process.execPath, [...serverArgs, ...args], {
+    cwd: projectRoot,
+    env: { ...getDefaultEnvironment(), ...env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  const [code] = (await once(child, 'exit')) as [number | null];
+  return { code, stdout, stderr };
 }
 
 const stopCases: Array<[string, (child: ChildProcess) => void]> = [
@@ -511,6 +526,77 @@ describe('stdio server', () => {
     } finally {
       await session.client.close();
     }
+  });
+
+  describe('CLI flags', () => {
+    it('--check validates a single workspace and prints the summary to stderr only', async () => {
+      const auditLog = path.join(fixture.outside, 'check-audit.jsonl');
+      const result = await runCli(['--check'], {
+        WORKSPACE_ROOT: fixture.root,
+        WORKSPACE_MODE: 'read-write',
+        WORKSPACE_MAX_DEPTH: '2',
+        WORKSPACE_AUDIT_LOG: auditLog,
+        WORKSPACE_EXTRA_DENY_PATTERNS: 'README*',
+      });
+      expect(result).toMatchObject({ code: 0, stdout: '' });
+      const lines = result.stderr.trimEnd().split('\n');
+      expect(lines[0]).toMatch(/^private-workspace-mcp \S+: configuration OK \(WORKSPACE_ROOT\)$/);
+      expect(lines).toContain(`workspace "workspace" read-write ${await realpath(fixture.root)}`);
+      expect(result.stderr).toContain('max_depth=2');
+      expect(lines).toContain(`audit: file ${path.join(await realpath(fixture.outside), 'check-audit.jsonl')} (rotate at 10485760 bytes)`);
+      expect(result.stderr).toMatch(/^deny: \d+ default patterns, extra: README\*$/m);
+      expect(result.stderr).not.toContain('listening on stdio');
+      // Checking must not create the audit file.
+      await expect(stat(auditLog)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('--check lists every workspace with its own mode', async () => {
+      const other = await createFixture();
+      try {
+        const result = await runCli(['--check'], {
+          WORKSPACE_ROOTS: `api=${fixture.root},web=${other.root}`,
+          WORKSPACE_READ_WRITE: 'web',
+        });
+        expect(result).toMatchObject({ code: 0, stdout: '' });
+        const lines = result.stderr.trimEnd().split('\n');
+        expect(lines[0]).toMatch(/configuration OK \(WORKSPACE_ROOTS\)$/);
+        expect(lines).toContain(`workspace "api" read-only ${await realpath(fixture.root)}`);
+        expect(lines).toContain(`workspace "web" read-write ${await realpath(other.root)}`);
+        expect(lines).toContain('audit: stderr');
+        expect(result.stderr).toMatch(/^deny: \d+ default patterns$/m);
+      } finally {
+        await other.cleanup();
+      }
+    });
+
+    it('--check fails with the same message as startup on invalid configuration', async () => {
+      const env = { WORKSPACE_ROOT: fixture.root, WORKSPACE_READ_WRITE: 'web' };
+      const checked = await runCli(['--check'], env);
+      const started = await runCli([], env);
+      expect(checked).toMatchObject({ code: 1, stdout: '' });
+      expect(started).toMatchObject({ code: 1, stdout: '' });
+      expect(checked.stderr).toBe(started.stderr);
+      expect(checked.stderr).toBe('private-workspace-mcp: invalid configuration: WORKSPACE_READ_WRITE requires WORKSPACE_ROOTS; use WORKSPACE_MODE with WORKSPACE_ROOT\n');
+    });
+
+    it('--version prints the package.json version without reading configuration', async () => {
+      const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };
+      const result = await runCli(['--version']);
+      expect(result).toEqual({ code: 0, stdout: `${pkg.version}\n`, stderr: '' });
+    });
+
+    it.each([
+      ['an unknown flag', ['--nope']],
+      ['a positional argument', ['serve']],
+      ['a value on a boolean flag', ['--check=yes']],
+      ['conflicting flags', ['--check', '--version']],
+    ])('rejects %s with usage and exit 2', async (_label, args) => {
+      const result = await runCli(args, { WORKSPACE_ROOT: fixture.root });
+      expect(result.code).toBe(2);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('Usage: private-workspace-mcp [--check | --version]');
+      expect(result.stderr).not.toContain('listening on stdio');
+    });
   });
 
   it('refuses to start without a valid workspace root', async () => {

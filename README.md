@@ -109,10 +109,11 @@ gh release download "$VERSION" --repo psw7205/private-workspace-mcp
 shasum -a 256 -c SHA256SUMS
 gh attestation verify index.mjs --repo psw7205/private-workspace-mcp
 ln -sfn "$VERSION" "$DIR/current"
+$(mise which node) "$DIR/current/index.mjs" --version
 ```
 
 - `gh attestation verify`는 파일이 이 repo의 release workflow에서 build됐는지 Sigstore 서명으로 확인한다. checksum만으로는 Release asset이 바뀐 경우를 막지 못한다.
-- 같은 방법으로 새 버전을 받고 `current`를 바꾼 뒤 daemon을 다시 띄우면 업그레이드가 끝난다. rollback은 `current`를 이전 버전으로 되돌리면 된다. profile은 고치지 않는다.
+- 같은 방법으로 새 버전을 받고 `current`를 바꾼 뒤, profile의 `--mcp-command`와 같은 env로 `$(mise which node) "$DIR/current/index.mjs" --check`가 통과하는지 확인하고(아래 연결 절) daemon을 다시 띄우면 업그레이드가 끝난다. rollback은 `current`를 이전 버전으로 되돌리면 된다. profile은 고치지 않는다.
 - source를 build해 쓰려면 아래 `<entry>` 자리에 repo의 `dist/index.js`를 넣고, 업그레이드할 때 `pnpm build`를 다시 한다.
 
 ## OpenAI Secure MCP Tunnel 연결
@@ -127,6 +128,12 @@ cp .env.example .env    # TUNNEL_ID, API_KEY 입력
 
 profile은 한 번만 만든다. profile은 `~/.config/tunnel-client/`에 머신별로 저장되고 절대 경로가 들어가므로 git으로 옮겨지지 않는다.
 
+profile을 만들기 전에 `--mcp-command`에 넣을 env와 entry 그대로 `--check`를 실행해 설정을 확인한다. 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. audit file은 만들지 않는다.
+
+```sh
+env WORKSPACE_ROOT=<project> WORKSPACE_MODE=read-write WORKSPACE_AUDIT_LOG=<audit-dir>/audit.jsonl $(mise which node) <entry> --check
+```
+
 ```sh
 set -a && . ./.env && set +a
 tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
@@ -136,6 +143,7 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
 
 - `<entry>`는 release 설치면 `$HOME/.local/share/private-workspace-mcp/current/index.mjs`, source build면 repo의 `dist/index.js` 절대 경로다.
 - `<project>`는 agent 전용 directory의 절대 경로다(filesystem root와 home은 거부됨). `<audit-dir>`는 workspace 밖의 기존 directory다. 빼면 audit은 `tunnel-client` 로그로 간다.
+- profile을 고칠 때도 같은 env로 `--check`를 먼저 돌린다. `--check`와 `--version` 외의 인자를 주면 usage를 내고 exit 2로 끝난다.
 - node는 `$(mise which node)`로 절대 경로를 넣는다. `tunnel-client`를 띄우는 shell에 mise가 활성화돼 있지 않으면 PATH의 `node`가 Node 26이 아닐 수 있다. 경로와 mode를 바꾸려면 `tunnel-client profiles edit workspace-mcp`로 고친다.
 
 실행할 때마다 `.env`의 `API_KEY`를 `CONTROL_PLANE_API_KEY`로 넘긴다. subshell에서 원래 이름을 지우므로 child에는 key가 전달되지 않는다. tunnel ID는 `init`이 profile에 적어 두므로 넘기지 않는다. `tunnel-client` 설정 우선순위는 flags > 환경 변수 > profile YAML이라 `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어쓴다.
@@ -169,7 +177,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 
 connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다. 새 버전에서 tool 목록, description, schema가 바뀌었으면 다음 순서로 반영한다. 내부 동작만 바뀌었으면 1까지만 한다.
 
-1. 새 release를 설치해 `current`를 바꾸고(source build면 `pnpm build`) daemon을 다시 띄운다.
+1. 새 release를 설치해 `current`를 바꾸고(source build면 `pnpm build`) profile과 같은 env로 `--check`를 통과하는지 본 뒤 daemon을 다시 띄운다.
 2. https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른다.
 3. 새 대화를 시작한다. 기존 대화에는 이전 tool 목록이 남을 수 있다.
 
