@@ -3,8 +3,9 @@ import * as z from 'zod/v4';
 
 import { runTool, type ToolDeps } from './run-tool.js';
 
+const modeSchema = z.enum(['read-only', 'read-write']);
+
 const sharedOutput = {
-  mode: z.enum(['read-only', 'read-write']),
   platform: z.string(),
   limits: z.object({
     max_read_bytes: z.number(),
@@ -16,17 +17,17 @@ const sharedOutput = {
   }),
 };
 
-const singleOutputSchema = z.object({ name: z.string(), root: z.literal('.'), ...sharedOutput });
-const multiOutputSchema = z.object({ workspaces: z.array(z.object({ name: z.string() })), ...sharedOutput });
+const singleOutputSchema = z.object({ name: z.string(), root: z.literal('.'), mode: modeSchema, ...sharedOutput });
+// No top-level mode in multi mode: with mixed modes no single value is true (ADR-008 Amendment).
+const multiOutputSchema = z.object({ workspaces: z.array(z.object({ name: z.string(), mode: modeSchema })), ...sharedOutput });
 
 export function registerWorkspaceInfo(server: McpServer, { config, audit }: ToolDeps): void {
   const description = config.multi
-    ? 'Describe the workspaces this server exposes: their names, the access mode (read-only or read-write) they share, platform, and limits. ' +
+    ? 'Describe the workspaces this server exposes: their names, each one\'s access mode (read-only or read-write), platform, and limits. ' +
       'Pass a name as `workspace` to the other tools; their paths are relative to that workspace root ".". Host paths are never revealed.'
     : 'Describe the workspace this server exposes: its name, access mode (read-only or read-write), platform, and limits. ' +
       'All tool paths are relative to the workspace root ".". The host path is never revealed.';
   const shared = {
-    mode: config.mode,
     platform: process.platform,
     limits: {
       max_read_bytes: config.limits.maxReadBytes,
@@ -37,9 +38,10 @@ export function registerWorkspaceInfo(server: McpServer, { config, audit }: Tool
       max_search_files: config.limits.maxSearchFiles,
     },
   };
+  const single = config.workspaces[0];
   const result = config.multi
-    ? { workspaces: config.workspaces.map(({ name }) => ({ name })), ...shared }
-    : { name: config.workspaces[0]?.name ?? '', root: '.' as const, ...shared };
+    ? { workspaces: config.workspaces.map(({ name, mode }) => ({ name, mode })), ...shared }
+    : { name: single?.name ?? '', root: '.' as const, mode: single?.mode ?? 'read-only', ...shared };
 
   server.registerTool(
     'get_workspace_info',

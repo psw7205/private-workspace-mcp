@@ -858,6 +858,8 @@ path: src/index.ts
 
 > **Amendment (2026-09-24):** 첫 단계는 ADR-008로 정한다. `WORKSPACE_ROOTS`로 이름과 root를 설정하고 tool은 `workspace` 인자를 받는다. capability policy(mode, limits, deny)는 우선 모든 workspace가 공유한다.
 
+> **Amendment (2026-09-24, 2):** access mode는 이제 workspace별로 정할 수 있다. `WORKSPACE_ROOTS`와 함께 `WORKSPACE_READ_WRITE`에 쓰기를 허용할 workspace 이름을 나열하고, 나머지는 read-only다(ADR-008 Amendment, implementation notes M37~M39). limits, deny 목록, audit 설정은 계속 모든 workspace가 공유한다.
+
 ---
 
 # 17. 장기적인 제품 방향

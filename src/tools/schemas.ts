@@ -14,6 +14,15 @@ export function workspaceShape(config: Config): { workspace?: z.ZodEnum<Record<s
   };
 }
 
+/** The last sentence of the write tools' descriptions: which workspaces accept writes (ADR-008 Amendment). */
+export function writeAccessNote(config: Config): string {
+  if (!config.multi) return 'Fails with READ_ONLY unless the operator enabled read-write mode.';
+  const writable = config.workspaces.filter(({ mode }) => mode === 'read-write').map(({ name }) => name);
+  if (writable.length === 0) return 'Every workspace is read-only, so this fails with READ_ONLY.';
+  const rest = writable.length < config.workspaces.length ? ' Other workspaces fail with READ_ONLY.' : '';
+  return `Writable workspaces: ${writable.join(', ')}.${rest}`;
+}
+
 export const pathSchema = z
   .string()
   .max(MAX_PATH_LENGTH)

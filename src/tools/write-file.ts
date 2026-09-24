@@ -2,8 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { writeTextFile } from '../filesystem/file-writer.js';
-import { guardFor, runTool, type ToolDeps } from './run-tool.js';
-import { pathSchema, workspaceShape } from './schemas.js';
+import { runTool, selectWorkspace, type ToolDeps } from './run-tool.js';
+import { pathSchema, workspaceShape, writeAccessNote } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -25,7 +25,7 @@ export function registerWriteFile(server: McpServer, deps: ToolDeps): void {
         'To replace an existing file, first read_file it and pass its `revision` as `expected_revision`; the write fails with REVISION_CONFLICT if the file changed since. ' +
         'To create a new file, omit `expected_revision`; missing parent directories are created. ' +
         `Content is limited to ${maxWriteBytes} bytes, and files over ${maxReadBytes} bytes cannot be replaced. ` +
-        'Fails with READ_ONLY unless the operator enabled read-write mode.',
+        writeAccessNote(config),
       inputSchema: z.object({
         ...workspaceShape(config),
         path: pathSchema,
@@ -40,9 +40,10 @@ export function registerWriteFile(server: McpServer, deps: ToolDeps): void {
     },
     async ({ workspace, path, content, expected_revision }, ctx) =>
       runTool({ tool: 'write_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
+        const { guard, mode } = selectWorkspace(deps, workspace);
         const result = await writeTextFile(
-          guardFor(deps, workspace),
-          { mode: config.mode, maxReadBytes, maxWriteBytes },
+          guard,
+          { mode, maxReadBytes, maxWriteBytes },
           { path, content, expectedRevision: expected_revision },
         );
         return { result: { ...result }, bytesWritten: result.bytes_written };

@@ -30,12 +30,16 @@ WORKSPACE_ROOTS=api=/abs/path/api,web=/abs/path/web
 * `WORKSPACE_ROOTS`와 `WORKSPACE_ROOT` 또는 `WORKSPACE_NAME`을 함께 주면 startup을 거부한다(fail closed).
 * mode, limits, deny 목록, audit 설정은 모든 workspace가 공유한다. workspace별 policy는 필요해질 때 설정 파일과 함께 별도 결정으로 다룬다.
 
+> **Amendment (2026-09-24):** mode는 workspace별로 정한다(PRD 16 Phase 8 첫 단계). `WORKSPACE_READ_WRITE=api,web`처럼 쓰기를 허용할 workspace 이름을 `,`로 나열하고, 나열하지 않은 workspace는 read-only다. `WORKSPACE_READ_WRITE`는 `WORKSPACE_ROOTS`와만 쓸 수 있고, `WORKSPACE_MODE`와 함께 주면 값과 상관없이 startup을 거부한다. 없는 이름, 두 번 나온 이름, 빈 항목도 거부한다. `WORKSPACE_READ_WRITE` 없이 `WORKSPACE_MODE=read-write`를 주면 지금처럼 모든 workspace가 read-write다. mode를 `WORKSPACE_ROOTS` 항목 문법(`api=/abs:rw` 등)에 넣지 않는 이유는 Windows drive 경로의 `:`와 겹치고 parser가 복잡해지기 때문이다. limits, deny 목록, audit 설정은 계속 공유한다. 세부 결정은 `docs/implementation-notes.md` M37~M39에 둔다.
+
 ### 2.2 Tool 인터페이스
 
 * `WORKSPACE_ROOTS`로 시작하면(항목이 하나여도) path를 받는 tool 6개에 필수 인자 `workspace`가 붙는다. schema는 설정된 이름의 enum이라 model이 `tools/list`만으로 선택지를 알고, 없는 이름은 SDK 입력 검증에서 거부된다.
 * `get_workspace_info`는 `{ workspaces: [{ name }], mode, platform, limits }`를 반환한다. host 경로는 넣지 않는다.
 * 한 호출은 workspace 하나만 다룬다. 여러 workspace를 한 번에 검색하지 않는다.
 * `WORKSPACE_ROOT`로 시작하면 tool schema, 출력, audit이 이전과 같다.
+
+> **Amendment (2026-09-24):** multi mode의 `get_workspace_info`는 `{ workspaces: [{ name, mode }], platform, limits }`를 반환한다. mode가 섞이면 top-level `mode` 하나로는 맞는 값이 없고, 어느 값을 넣어도 model이 잘못 판단할 수 있어 뺀다. `write_file`과 `edit_file`의 description은 startup 시점에 쓰기 가능한 workspace 이름을 적는다. annotations는 바꾸지 않는다. single mode(`WORKSPACE_ROOT`)의 schema와 출력은 그대로다.
 
 ### 2.3 내부 구조
 
@@ -57,6 +61,8 @@ WORKSPACE_ROOTS=api=/abs/path/api,web=/abs/path/web
 * mode가 공유되므로 read-write로 띄우면 모든 workspace가 쓰기 가능하다. 일부만 쓰기가 필요하면 tunnel을 나눈다.
 * workspace를 추가하거나 빼면 tool schema가 바뀌므로 daemon 재시작 뒤 connector Refresh가 필요하다.
 * OS 권한 경계(ADR-001 11절)를 container로 만들 때 mount가 workspace 수만큼 늘어난다.
+
+> **Amendment (2026-09-24):** "mode가 공유되므로" 항목은 `WORKSPACE_READ_WRITE`(2.1절 Amendment)로 해소한다. 일부 repo만 쓰기가 필요하면 tunnel을 나누지 않고 그 이름만 나열한다. 접근 주체가 같다는 항목은 그대로 남는다. 권한이 다른 사용자에게 줄 repo는 여전히 tunnel을 나눈다.
 
 ## 4. Alternatives Considered
 

@@ -29,6 +29,8 @@ export interface Workspace {
   name: string;
   /** Canonical absolute path. Never returned to MCP clients. */
   root: string;
+  /** Whether write tools may change this workspace; travels with the workspace so tools cannot pair it with another. */
+  mode: WorkspaceMode;
 }
 
 export interface Config {
@@ -36,7 +38,6 @@ export interface Config {
   workspaces: Workspace[];
   /** Set by WORKSPACE_ROOTS: tools take a `workspace` argument (ADR-008). */
   multi: boolean;
-  mode: WorkspaceMode;
   limits: Limits;
   audit: AuditConfig;
   /** Defaults followed by operator additions. */
@@ -60,12 +61,17 @@ const LIMIT_ENV: Record<keyof Limits, [name: string, fallback: number, max?: num
 /** Reads configuration from the environment and fails closed on any invalid value. */
 export async function loadConfig(env: Record<string, string | undefined>): Promise<Config> {
   const multi = Boolean(env.WORKSPACE_ROOTS);
-  const workspaces = env.WORKSPACE_ROOTS ? await loadWorkspaceRoots(env.WORKSPACE_ROOTS, env) : await loadWorkspaceRoot(env);
+  const roots = env.WORKSPACE_ROOTS ? await loadWorkspaceRoots(env.WORKSPACE_ROOTS, env) : await loadWorkspaceRoot(env);
 
   const mode = env.WORKSPACE_MODE ?? 'read-only';
   if (mode !== 'read-only' && mode !== 'read-write') {
     throw new Error('WORKSPACE_MODE must be "read-only" or "read-write"');
   }
+  const writable = parseReadWriteList(env, roots, multi);
+  const workspaces: Workspace[] = roots.map((workspace) => ({
+    ...workspace,
+    mode: writable === undefined ? mode : writable.has(workspace.name) ? 'read-write' : 'read-only',
+  }));
 
   const limits = {} as Limits;
   for (const [key, [name, fallback, max]] of Object.entries(LIMIT_ENV) as [keyof Limits, [string, number, number?]][]) {
@@ -79,21 +85,50 @@ export async function loadConfig(env: Record<string, string | undefined>): Promi
 
   const denyPatterns = [...DEFAULT_DENY_PATTERNS, ...parseExtraDenyPatterns(env.WORKSPACE_EXTRA_DENY_PATTERNS)];
 
-  return { workspaces, multi, mode, limits, audit, denyPatterns };
+  return { workspaces, multi, limits, audit, denyPatterns };
 }
 
-async function loadWorkspaceRoot(env: Record<string, string | undefined>): Promise<Workspace[]> {
+type WorkspaceRoot = Omit<Workspace, 'mode'>;
+
+/**
+ * Names from WORKSPACE_READ_WRITE, or undefined when unset so WORKSPACE_MODE applies to all.
+ * Any ambiguity fails startup: single mode, WORKSPACE_MODE alongside, unknown or repeated names.
+ */
+function parseReadWriteList(
+  env: Record<string, string | undefined>,
+  roots: WorkspaceRoot[],
+  multi: boolean,
+): Set<string> | undefined {
+  const raw = env.WORKSPACE_READ_WRITE;
+  if (raw === undefined || raw === '') return undefined;
+  if (!multi) throw new Error('WORKSPACE_READ_WRITE requires WORKSPACE_ROOTS; use WORKSPACE_MODE with WORKSPACE_ROOT');
+  if (env.WORKSPACE_MODE !== undefined) {
+    throw new Error('WORKSPACE_READ_WRITE cannot be combined with WORKSPACE_MODE; unlisted workspaces are read-only');
+  }
+  const names = new Set<string>();
+  for (const entry of raw.split(',')) {
+    const name = entry.trim();
+    if (!roots.some((workspace) => workspace.name === name)) {
+      throw new Error('WORKSPACE_READ_WRITE entries must be workspace names from WORKSPACE_ROOTS');
+    }
+    if (names.has(name)) throw new Error(`WORKSPACE_READ_WRITE names workspace "${name}" twice`);
+    names.add(name);
+  }
+  return names;
+}
+
+async function loadWorkspaceRoot(env: Record<string, string | undefined>): Promise<WorkspaceRoot[]> {
   if (!env.WORKSPACE_ROOT) throw new Error('WORKSPACE_ROOT is required');
   const root = await resolveRoot(env.WORKSPACE_ROOT, 'WORKSPACE_ROOT');
   return [{ name: env.WORKSPACE_NAME || path.basename(root), root }];
 }
 
 /** Parses `name=/abs/path,...`, splitting each entry at its first `=`. */
-async function loadWorkspaceRoots(raw: string, env: Record<string, string | undefined>): Promise<Workspace[]> {
+async function loadWorkspaceRoots(raw: string, env: Record<string, string | undefined>): Promise<WorkspaceRoot[]> {
   if (env.WORKSPACE_ROOT || env.WORKSPACE_NAME) {
     throw new Error('WORKSPACE_ROOTS cannot be combined with WORKSPACE_ROOT or WORKSPACE_NAME');
   }
-  const workspaces: Workspace[] = [];
+  const workspaces: WorkspaceRoot[] = [];
   for (const entry of raw.split(',')) {
     const separator = entry.indexOf('=');
     const name = entry.slice(0, Math.max(separator, 0)).trim();
@@ -147,7 +182,7 @@ async function assertNarrowRoot(root: string, label: string): Promise<void> {
 }
 
 /** The audit log must live outside every workspace so tools can neither read nor rewrite it. */
-async function resolveAuditLogPath(raw: string, workspaces: Workspace[]): Promise<string> {
+async function resolveAuditLogPath(raw: string, workspaces: WorkspaceRoot[]): Promise<string> {
   if (!path.isAbsolute(raw)) throw new Error('WORKSPACE_AUDIT_LOG must be an absolute path');
   const parent = await realpath(path.dirname(raw)).catch(() => {
     throw new Error('WORKSPACE_AUDIT_LOG parent directory does not exist');

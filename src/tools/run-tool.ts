@@ -1,7 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/server';
 
 import type { AuditRecord, AuditSink } from '../audit/audit-log.js';
-import type { Config } from '../config/config.js';
+import type { Config, WorkspaceMode } from '../config/config.js';
 import { WorkspaceError } from '../errors/errors.js';
 import type { PathGuard } from '../filesystem/path-guard.js';
 
@@ -88,18 +88,29 @@ export async function runTool<T extends Record<string, unknown>>(
   }
 }
 
+/** A configured workspace as tools see it: its guard and access mode, always selected together. */
+export interface SelectedWorkspace {
+  guard: PathGuard;
+  mode: WorkspaceMode;
+}
+
 export interface ToolDeps {
   config: Config;
-  /** One guard per configured workspace, keyed by name. */
-  guards: ReadonlyMap<string, PathGuard>;
+  /** One entry per configured workspace, keyed by name. */
+  workspaces: ReadonlyMap<string, SelectedWorkspace>;
   audit: AuditSink;
 }
 
-/** The guard for the `workspace` argument in multi mode, or the only workspace's guard otherwise. */
-export function guardFor({ config, guards }: ToolDeps, workspace: unknown): PathGuard {
+/** The workspace for the `workspace` argument in multi mode, or the only workspace otherwise. */
+export function selectWorkspace({ config, workspaces }: ToolDeps, workspace: unknown): SelectedWorkspace {
   const name = config.multi ? workspace : config.workspaces[0]?.name;
-  const guard = typeof name === 'string' ? guards.get(name) : undefined;
+  const selected = typeof name === 'string' ? workspaces.get(name) : undefined;
   // Unreachable: the input schema only accepts configured names. Surfaces as INTERNAL_ERROR.
-  if (guard === undefined) throw new Error('no guard for the requested workspace');
-  return guard;
+  if (selected === undefined) throw new Error('no guard for the requested workspace');
+  return selected;
+}
+
+/** The guard of the selected workspace, for tools that never write. */
+export function guardFor(deps: ToolDeps, workspace: unknown): PathGuard {
+  return selectWorkspace(deps, workspace).guard;
 }

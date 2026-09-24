@@ -49,7 +49,8 @@ async function startProxy(workspaceEnv: Record<string, string>, scratch: string,
     'tunnel-client',
     ['dev', 'proxy', '--mcp-command', `${process.execPath} ${serverEntry}`, '--url-file', urlFile],
     {
-      env: { ...process.env, ...workspaceEnv, WORKSPACE_MODE: 'read-write' },
+      // Drop inherited WORKSPACE_* so each case runs with exactly the settings it names.
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WORKSPACE_'))), ...workspaceEnv },
       stdio: ['ignore', 'ignore', 'pipe'],
     },
   );
@@ -118,7 +119,10 @@ async function exercise(mcpUrl: string, versionNegotiation: ClientOptions['versi
   await client.close();
 }
 
-/** WORKSPACE_ROOTS (ADR-008): one tunnel-client child serves both workspaces, selected per call. */
+/**
+ * WORKSPACE_ROOTS (ADR-008): one tunnel-client child serves both workspaces, selected per call.
+ * Started with WORKSPACE_READ_WRITE=web, so only `web` accepts writes.
+ */
 async function exerciseMulti(mcpUrl: string): Promise<void> {
   const client = new Client({ name: 'pwmcp-e2e', version: '0.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
   await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
@@ -127,12 +131,20 @@ async function exerciseMulti(mcpUrl: string): Promise<void> {
   const read = tools.find((tool) => tool.name === 'read_file');
   assert.deepEqual((read?.inputSchema.properties?.workspace as { enum?: string[] } | undefined)?.enum, ['api', 'web']);
   const info = text(await client.callTool({ name: 'get_workspace_info', arguments: {} }));
-  assert.deepEqual(info.workspaces, [{ name: 'api' }, { name: 'web' }]);
+  assert.deepEqual(info.workspaces, [
+    { name: 'api', mode: 'read-only' },
+    { name: 'web', mode: 'read-write' },
+  ]);
+  assert.equal(info.mode, undefined);
+  const write = tools.find((tool) => tool.name === 'write_file');
+  assert.match(write?.description ?? '', /Writable workspaces: web\./);
 
   const created = text(
     await client.callTool({ name: 'write_file', arguments: { workspace: 'web', path: 'only-web.md', content: '# web\n' } }),
   );
   assert.equal(created.created, true);
+  const denied = await client.callTool({ name: 'write_file', arguments: { workspace: 'api', path: 'only-web.md', content: '# api\n' } });
+  assert.equal(text(denied).error.code, 'READ_ONLY');
   const missing = await client.callTool({ name: 'read_file', arguments: { workspace: 'api', path: 'only-web.md' } });
   assert.equal(text(missing).error.code, 'FILE_NOT_FOUND');
   for (const workspace of ['api', 'web']) {
@@ -141,7 +153,7 @@ async function exerciseMulti(mcpUrl: string): Promise<void> {
   }
   const unknown = await client.callTool({ name: 'read_file', arguments: { workspace: 'nope', path: 'README.md' } });
   assert.equal((unknown as { isError?: boolean }).isError, true);
-  log('multi: workspace enum, per-workspace isolation, escape and unknown workspace rejected');
+  log('multi: workspace enum, per-workspace mode (api READ_ONLY, web writable), isolation, escape and unknown workspace rejected');
   await client.close();
 }
 
@@ -169,7 +181,7 @@ async function main(): Promise<void> {
   try {
     // serveStdio pins the stdio connection to the era of its first request, and tunnel-client
     // multiplexes all callers onto one child, so each era gets its own tunnel-client here.
-    const legacy = await startProxy({ WORKSPACE_ROOT: workspace }, scratch, 'legacy');
+    const legacy = await startProxy({ WORKSPACE_ROOT: workspace, WORKSPACE_MODE: 'read-write' }, scratch, 'legacy');
     proxies.push(legacy.proxy);
     log(`tunnel-client dev proxy up at ${legacy.mcpUrl}, MCP child pid ${legacy.childPid}`);
     await exercise(legacy.mcpUrl, undefined, 'legacy');
@@ -177,15 +189,16 @@ async function main(): Promise<void> {
     assert.ok(!legacy.stderr().includes('SECRET=1'), 'file content must not be logged');
     await stopAndCheckChild(legacy.proxy, legacy.childPid, 'SIGTERM');
 
-    const modern = await startProxy({ WORKSPACE_ROOT: workspace }, scratch, 'modern');
+    const modern = await startProxy({ WORKSPACE_ROOT: workspace, WORKSPACE_MODE: 'read-write' }, scratch, 'modern');
     proxies.push(modern.proxy);
     await exercise(modern.mcpUrl, { mode: { pin: '2026-07-28' } }, 'modern');
     await stopAndCheckChild(modern.proxy, modern.childPid, 'SIGKILL');
 
-    const multi = await startProxy({ WORKSPACE_ROOTS: `api=${workspace},web=${web}` }, scratch, 'multi');
+    const multi = await startProxy({ WORKSPACE_ROOTS: `api=${workspace},web=${web}`, WORKSPACE_READ_WRITE: 'web' }, scratch, 'multi');
     proxies.push(multi.proxy);
     await exerciseMulti(multi.mcpUrl);
     assert.match(multi.stderr(), /"workspace":"web"/, 'audit records name the workspace');
+    assert.match(multi.stderr(), /"workspace":"api"[^\n]*"error_code":"READ_ONLY"/, 'audit records the read-only rejection');
     await stopAndCheckChild(multi.proxy, multi.childPid, 'SIGTERM');
 
     assert.deepEqual(execFileSync('ls', [outside], { encoding: 'utf8' }).trim().split('\n'), ['private.txt']);

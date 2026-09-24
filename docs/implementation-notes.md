@@ -80,6 +80,14 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 | M35 | `workspace` 인자 schema | 설정한 이름의 `z.enum`, 필수. `get_workspace_info`는 인자 없음. 모르는 이름과 누락은 SDK 입력 검증에서 `isError`로 거부되어 audit에 남지 않음(다른 입력 검증 실패와 같음) | `tools/list`만으로 선택지가 보이고 tool 안에 모르는 이름이 들어오지 않음. zod가 설정에 따라 생기는 field를 `unknown`으로 추론하므로 `runTool`과 `guardFor`가 runtime에 string으로 좁힘(cast 없음) |
 | M36 | single mode 호환 | `WORKSPACE_ROOT`면 tool schema, `get_workspace_info` 출력, audit이 이전과 같음 | 기존 profile을 그대로 씀 |
 
+### 1.2.6 Workspace별 mode 결정 (2026-09-24, ADR-008 Amendment)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M37 | 설정 형식 | `WORKSPACE_READ_WRITE=api,web`: 쓰기를 허용할 workspace 이름 목록. 나열하지 않은 workspace는 read-only. 항목은 앞뒤 공백을 지우고 `WORKSPACE_ROOTS`의 이름과 정확히 같아야 함(대소문자 구분). 빈 env는 설정 안 한 것으로 봄. 다음은 startup 거부: `WORKSPACE_ROOTS` 없이 사용, `WORKSPACE_MODE`와 함께 사용(`read-only`여도), 없는 이름, 두 번 나온 이름, 빈 항목(`web,`, 공백만). `WORKSPACE_READ_WRITE` 없이 `WORKSPACE_MODE=read-write`면 모든 workspace가 read-write | 쓰기 허용 목록만 두면 기본값이 read-only로 남고 오타는 쓰기 허용이 아니라 startup 실패가 됨. 권장안은 `WORKSPACE_MODE=read-write`만 거부했지만, `read-only`와 함께 주는 경우도 "기본은 read-only, 목록은 예외"인지 설정 충돌인지 읽는 사람에 따라 갈려 한 규칙으로 막음(multi mode는 미출시라 기존 profile 영향 없음). mode를 `WORKSPACE_ROOTS` 항목에 붙이면 Windows drive 경로의 `:`와 겹치고 M32 parser가 복잡해짐 |
+| M38 | `get_workspace_info`와 description | multi mode 출력은 `{ workspaces: [{ name, mode }], platform, limits }`. top-level `mode`는 뺌. `write_file`·`edit_file` description의 마지막 문장은 multi mode에서 `Writable workspaces: <names>. Other workspaces fail with READ_ONLY.`(모두 쓰기 가능하면 뒤 문장은 생략, 쓰기 가능 workspace가 없으면 `Every workspace is read-only, so this fails with READ_ONLY.`). single mode 문장과 출력은 그대로. annotations는 그대로 | mode가 섞이면 top-level 값 하나는 항상 일부 workspace에 대해 틀림. description은 startup에 정해지는 정적 값이라 `tools/list`만으로 model이 쓰기 대상을 고를 수 있음. annotations는 tool 단위라 workspace별로 나눌 수 없어 가장 보수적인 `destructiveHint: true`를 유지 |
+| M39 | mode 전달 경로 | `Config.mode`를 없애고 `Workspace.mode`에 둠. server가 workspace마다 `{ guard, mode }`를 만들고, `selectWorkspace`가 `guardFor`와 같은 방식(multi면 `workspace` 인자, 아니면 유일한 workspace)으로 둘을 함께 고름. `write_file`·`edit_file`은 고른 값의 `mode`를 filesystem 모듈에 넘기고 `READ_ONLY` 판정은 기존대로 `file-writer`·`file-editor`에서 함 | guard와 mode를 따로 찾으면 서로 다른 workspace 값을 짝지을 수 있음. 한 번의 선택으로 묶어 불일치를 구조적으로 막음. read tool은 `guardFor`(=`selectWorkspace(...).guard`)를 그대로 씀 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -92,7 +100,8 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 |-----|--------|------|
 | `WORKSPACE_ROOT` | (이것 또는 `WORKSPACE_ROOTS` 필수) | 절대 경로. 존재하는 directory여야 하며 startup 시 realpath로 고정. filesystem root, home, home의 상위는 거부(M27) |
 | `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,...`. 각 root에 `WORKSPACE_ROOT`와 같은 검사, 겹침 거부(M32~M34). `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓰면 거부 |
-| `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write` |
+| `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write`. `WORKSPACE_ROOTS`에서 `WORKSPACE_READ_WRITE` 없이 쓰면 모든 workspace에 적용 |
+| `WORKSPACE_READ_WRITE` | (없음) | `WORKSPACE_ROOTS`에서 read-write로 둘 workspace 이름 목록(`,` 구분). 나머지는 read-only. `WORKSPACE_ROOT`·`WORKSPACE_MODE`와 함께 쓰거나 없는 이름·중복·빈 항목이 있으면 거부(M37) |
 | `WORKSPACE_NAME` | root basename | `get_workspace_info`에 노출되는 이름 |
 | `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이 크기를 넘는 파일은 read 거부 |
 | `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | UTF-8 기준 write content 최대 크기 |
@@ -166,6 +175,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 - CI (2026-09-23): M28 반영 후 commit `4908af0`의 CI run 35818539212가 ubuntu-latest, macos-latest, windows-latest 모두 통과했다
 - release `v0.1.0` (2026-09-23): tag push로 release workflow run 35818627892가 성공했고, GitHub Release에 `index.mjs`, `index.mjs.map`, `SHA256SUMS`, `THIRD_PARTY_LICENSES.txt`가 올라갔다. 2026-09-24에 repo 밖 임시 directory로 `gh release download v0.1.0`을 받아 `shasum -a 256 -c SHA256SUMS`(3개 파일 OK)와 파일별 `gh attestation verify --repo psw7205/private-workspace-mcp`(3개 모두 통과)를 확인했다. attestation 하나가 3개 파일을 subject로 담고 signer는 `release.yml@refs/tags/v0.1.0`이다. 내용을 바꾼 `index.mjs`는 verify가 실패했다
 - multi-workspace (2026-09-24, ADR-008): `pnpm test` 376개 통과. stdio test로 `WORKSPACE_ROOTS`의 `workspace` enum schema, workspace 간 격리, workspace별 escape·deny 거부, 모르는 이름과 누락 거부, audit의 `workspace` field, single mode schema에 `workspace`가 없음을 확인했다. `pnpm e2e:tunnel`에 multi case를 추가해 `tunnel-client` 0.0.14 `dev proxy` 경유(modern era)로 같은 항목이 통과했다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 23개도 통과했다. hosted(ChatGPT UI) 경로는 아직 확인하지 않았다
+- workspace별 mode (2026-09-24, ADR-008 Amendment): `pnpm test` 12 files, 391 tests 통과(config 65, stdio 27). config test로 `WORKSPACE_READ_WRITE`의 workspace별 mode, `WORKSPACE_MODE=read-write` 단독 시 전체 read-write, 거부 조건(single mode, `WORKSPACE_MODE` 동시 지정, 없는 이름, 중복, 빈 항목, 대소문자 다른 이름)을 확인했다. stdio test로 `workspaces[].mode`와 top-level `mode` 부재, description의 쓰기 가능 workspace 이름, read-only workspace의 `write_file`·`edit_file` `READ_ONLY`와 쓰기 가능 workspace의 성공, audit의 `workspace`·`error_code`, host 경로 비노출을 확인했다. single mode는 `main`과 tools/list·`get_workspace_info`·`READ_ONLY` 결과를 JSON으로 비교해 byte 단위로 같았다(read-only·read-write 양쪽). `pnpm e2e:tunnel` multi case를 `WORKSPACE_READ_WRITE=web`으로 바꿔 `tunnel-client` `dev proxy` 경유로 `api` 쓰기 `READ_ONLY`, `web` 쓰기 성공, audit의 `READ_ONLY` 기록이 통과했다
 - 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
 ## 7. Future TODO
@@ -177,4 +187,4 @@ PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은
 - 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
 - README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
-- ChatGPT UI에서 `WORKSPACE_ROOTS` connector로 model이 `workspace` 인자를 골라 호출하는지 확인(ADR-008)
+- ChatGPT UI에서 `WORKSPACE_ROOTS` connector로 model이 `workspace` 인자를 골라 호출하는지 확인(ADR-008). `WORKSPACE_READ_WRITE`로 mode를 섞었을 때 model이 description을 보고 쓰기 가능한 workspace를 고르는지도 함께 확인(M38)

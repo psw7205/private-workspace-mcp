@@ -2,8 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { editTextFile } from '../filesystem/file-editor.js';
-import { guardFor, runTool, type ToolDeps } from './run-tool.js';
-import { pathSchema, workspaceShape } from './schemas.js';
+import { runTool, selectWorkspace, type ToolDeps } from './run-tool.js';
+import { pathSchema, workspaceShape, writeAccessNote } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -24,7 +24,7 @@ export function registerEditFile(server: McpServer, deps: ToolDeps): void {
         '`old_string` must match the current content exactly (whitespace and line endings included) and occur once, ' +
         'unless `replace_all` is true; otherwise the edit fails with EDIT_NO_MATCH or EDIT_AMBIGUOUS and nothing changes. ' +
         'Pass the `revision` from read_file as `expected_revision`; the result returns the new revision for a follow-up edit. ' +
-        `Files over ${maxReadBytes} bytes cannot be edited. Fails with READ_ONLY unless the operator enabled read-write mode.`,
+        `Files over ${maxReadBytes} bytes cannot be edited. ${writeAccessNote(config)}`,
       inputSchema: z.object({
         ...workspaceShape(config),
         path: pathSchema,
@@ -38,9 +38,10 @@ export function registerEditFile(server: McpServer, deps: ToolDeps): void {
     },
     async ({ workspace, path, old_string, new_string, expected_revision, replace_all }, ctx) =>
       runTool({ tool: 'edit_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
+        const { guard, mode } = selectWorkspace(deps, workspace);
         const result = await editTextFile(
-          guardFor(deps, workspace),
-          { mode: config.mode, maxReadBytes, maxWriteBytes },
+          guard,
+          { mode, maxReadBytes, maxWriteBytes },
           { path, oldString: old_string, newString: new_string, expectedRevision: expected_revision, replaceAll: replace_all },
         );
         return { result: { ...result }, bytesWritten: result.bytes_written };

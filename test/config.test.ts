@@ -26,9 +26,8 @@ describe('loadConfig', () => {
   it('defaults to read-only with documented limits', async () => {
     const config = await loadConfig({ WORKSPACE_ROOT: workspace });
     expect(config).toEqual({
-      workspaces: [{ name: 'my-project', root: await realpath(workspace) }],
+      workspaces: [{ name: 'my-project', root: await realpath(workspace), mode: 'read-only' }],
       multi: false,
-      mode: 'read-only',
       limits: {
         maxReadBytes: 1_048_576,
         maxWriteBytes: 1_048_576,
@@ -53,7 +52,7 @@ describe('loadConfig', () => {
 
   it('canonicalizes a symlinked root', async () => {
     const config = await loadConfig({ WORKSPACE_ROOT: path.join(base, 'workspace-link') });
-    expect(config.workspaces).toEqual([{ name: 'my-project', root: await realpath(workspace) }]);
+    expect(config.workspaces).toEqual([{ name: 'my-project', root: await realpath(workspace), mode: 'read-only' }]);
   });
 
   it('reads explicit mode, name, and limits', async () => {
@@ -68,8 +67,7 @@ describe('loadConfig', () => {
       WORKSPACE_REQUEST_TIMEOUT_MS: '500',
       WORKSPACE_MAX_SEARCH_FILES: '40',
     });
-    expect(config.mode).toBe('read-write');
-    expect(config.workspaces[0]?.name).toBe('alias');
+    expect(config.workspaces).toEqual([{ name: 'alias', root: await realpath(workspace), mode: 'read-write' }]);
     expect(config.limits).toEqual({
       maxReadBytes: 10,
       maxWriteBytes: 20,
@@ -166,10 +164,9 @@ describe('loadConfig', () => {
       const config = await loadConfig({ WORKSPACE_ROOTS: ` api=${api} , web_2=${path.join(base, 'workspace-link')} ` });
       expect(config.multi).toBe(true);
       expect(config.workspaces).toEqual([
-        { name: 'api', root: await realpath(api) },
-        { name: 'web_2', root: await realpath(workspace) },
+        { name: 'api', root: await realpath(api), mode: 'read-only' },
+        { name: 'web_2', root: await realpath(workspace), mode: 'read-only' },
       ]);
-      expect(config.mode).toBe('read-only');
     });
 
     it('keeps the argument even for a single entry', async () => {
@@ -181,7 +178,7 @@ describe('loadConfig', () => {
       const odd = path.join(base, 'a=b');
       await mkdir(odd, { recursive: true });
       const config = await loadConfig({ WORKSPACE_ROOTS: `odd=${odd}` });
-      expect(config.workspaces).toEqual([{ name: 'odd', root: await realpath(odd) }]);
+      expect(config.workspaces).toEqual([{ name: 'odd', root: await realpath(odd), mode: 'read-only' }]);
     });
 
     it.each([
@@ -212,6 +209,39 @@ describe('loadConfig', () => {
       await expect(loadConfig({ WORKSPACE_ROOTS: `api=${api}`, ...extra() })).rejects.toThrow(/WORKSPACE_ROOTS/);
     });
 
+    it('applies WORKSPACE_MODE=read-write to every workspace', async () => {
+      const config = await loadConfig({ WORKSPACE_ROOTS: `api=${api},web=${web}`, WORKSPACE_MODE: 'read-write' });
+      expect(config.workspaces.map(({ name, mode }) => ({ name, mode }))).toEqual([
+        { name: 'api', mode: 'read-write' },
+        { name: 'web', mode: 'read-write' },
+      ]);
+    });
+
+    it('makes only the workspaces in WORKSPACE_READ_WRITE writable', async () => {
+      const config = await loadConfig({ WORKSPACE_ROOTS: `api=${api},web=${web}`, WORKSPACE_READ_WRITE: ' web ' });
+      expect(config.workspaces.map(({ name, mode }) => ({ name, mode }))).toEqual([
+        { name: 'api', mode: 'read-only' },
+        { name: 'web', mode: 'read-write' },
+      ]);
+    });
+
+    it('treats an empty WORKSPACE_READ_WRITE as unset', async () => {
+      const config = await loadConfig({ WORKSPACE_ROOTS: `api=${api}`, WORKSPACE_READ_WRITE: '' });
+      expect(config.workspaces[0]?.mode).toBe('read-only');
+    });
+
+    it.each([
+      ['an unknown name', { WORKSPACE_READ_WRITE: 'nope' }],
+      ['a name listed twice', { WORKSPACE_READ_WRITE: 'web,web' }],
+      ['an empty entry', { WORKSPACE_READ_WRITE: 'web,' }],
+      ['a blank list', { WORKSPACE_READ_WRITE: ' ' }],
+      ['a differently cased name', { WORKSPACE_READ_WRITE: 'Web' }],
+      ['WORKSPACE_MODE=read-write', { WORKSPACE_READ_WRITE: 'web', WORKSPACE_MODE: 'read-write' }],
+      ['WORKSPACE_MODE=read-only', { WORKSPACE_READ_WRITE: 'web', WORKSPACE_MODE: 'read-only' }],
+    ])('rejects WORKSPACE_READ_WRITE with %s', async (_label, extra: Record<string, string>) => {
+      await expect(loadConfig({ WORKSPACE_ROOTS: `api=${api},web=${web}`, ...extra })).rejects.toThrow(/WORKSPACE_READ_WRITE/);
+    });
+
     it('requires the audit log outside every root', async () => {
       await expect(
         loadConfig({ WORKSPACE_ROOTS: `api=${api},web=${web}`, WORKSPACE_AUDIT_LOG: path.join(web, 'audit.jsonl') }),
@@ -220,6 +250,12 @@ describe('loadConfig', () => {
         loadConfig({ WORKSPACE_ROOTS: `api=${api},web=${web}`, WORKSPACE_AUDIT_LOG: path.join(base, 'audit.jsonl') }),
       ).resolves.toMatchObject({ audit: { path: path.join(await realpath(base), 'audit.jsonl') } });
     });
+  });
+
+  it('rejects WORKSPACE_READ_WRITE without WORKSPACE_ROOTS', async () => {
+    await expect(loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_READ_WRITE: 'my-project' })).rejects.toThrow(
+      /WORKSPACE_READ_WRITE/,
+    );
   });
 
   it('rejects a root that is a file', async () => {

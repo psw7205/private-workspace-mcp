@@ -98,6 +98,9 @@ describe('stdio server', () => {
       expect(byName.write_file?.annotations?.destructiveHint).toBe(true);
       expect(byName.edit_file?.annotations?.destructiveHint).toBe(true);
       for (const tool of tools) expect(tool.inputSchema.properties ?? {}).not.toHaveProperty('workspace');
+      for (const name of ['write_file', 'edit_file']) {
+        expect(byName[name]?.description, name).toMatch(/Fails with READ_ONLY unless the operator enabled read-write mode\.$/);
+      }
     });
 
     it('describes the workspace without exposing the host path', async () => {
@@ -110,6 +113,7 @@ describe('stdio server', () => {
         platform: process.platform,
         limits: { max_read_bytes: 1_048_576, max_depth: 2 },
       });
+      expect(Object.keys(info)).toEqual(['name', 'root', 'mode', 'platform', 'limits']);
       expectNoHostPath(JSON.stringify(result), fixture);
     });
 
@@ -234,13 +238,21 @@ describe('stdio server', () => {
       }
       const info = tools.find((tool) => tool.name === 'get_workspace_info');
       expect(info?.inputSchema.properties ?? {}).not.toHaveProperty('workspace');
+      for (const name of ['write_file', 'edit_file']) {
+        const tool = tools.find((candidate) => candidate.name === name);
+        expect(tool?.description, name).toMatch(/Writable workspaces: api, web\.$/);
+      }
     });
 
     it('lists the workspaces without host paths', async () => {
       const result = await call('get_workspace_info', {});
       const info = parseText(result);
-      expect(info).toMatchObject({ workspaces: [{ name: 'api' }, { name: 'web' }], mode: 'read-write' });
+      expect(info.workspaces).toEqual([
+        { name: 'api', mode: 'read-write' },
+        { name: 'web', mode: 'read-write' },
+      ]);
       expect(info).not.toHaveProperty('root');
+      expect(info).not.toHaveProperty('mode');
       expectNoHostPath(JSON.stringify(result), fixture);
       expectNoHostPath(JSON.stringify(result), other);
     });
@@ -295,6 +307,92 @@ describe('stdio server', () => {
         ok: true,
       });
       expect(records.find((record) => record.tool === 'get_workspace_info')).not.toHaveProperty('workspace');
+    });
+  });
+
+  describe('per-workspace mode (WORKSPACE_READ_WRITE)', () => {
+    let other: Fixture;
+    let session: Awaited<ReturnType<typeof connect>>;
+
+    beforeAll(async () => {
+      other = await createFixture();
+      session = await connect({ WORKSPACE_ROOTS: `api=${fixture.root},web=${other.root}`, WORKSPACE_READ_WRITE: 'web' });
+    });
+
+    afterAll(async () => {
+      await session.client.close();
+      await other.cleanup();
+    });
+
+    const call = (name: string, args: Record<string, unknown>) => session.client.callTool({ name, arguments: args });
+    const expectNoHostPaths = (result: unknown) => {
+      expectNoHostPath(JSON.stringify(result), fixture);
+      expectNoHostPath(JSON.stringify(result), other);
+    };
+
+    it('reports each workspace mode without a shared one', async () => {
+      const result = await call('get_workspace_info', {});
+      const info = parseText(result);
+      expect(info.workspaces).toEqual([
+        { name: 'api', mode: 'read-only' },
+        { name: 'web', mode: 'read-write' },
+      ]);
+      expect(info).not.toHaveProperty('mode');
+      expectNoHostPaths(result);
+    });
+
+    it('names the writable workspaces in the write tool descriptions', async () => {
+      const { tools } = await session.client.listTools();
+      for (const name of ['write_file', 'edit_file']) {
+        const tool = tools.find((candidate) => candidate.name === name);
+        expect(tool?.description, name).toContain('Writable workspaces: web.');
+        expect(tool?.annotations?.destructiveHint, name).toBe(true);
+      }
+    });
+
+    it('rejects writes to a read-only workspace and allows the writable one', async () => {
+      const denied = await call('write_file', { workspace: 'api', path: 'new.txt', content: 'x' });
+      expect(parseText(denied).error.code).toBe('READ_ONLY');
+      expectNoHostPaths(denied);
+
+      const read = parseText(await call('read_file', { workspace: 'api', path: 'README.md' }));
+      const edit = await call('edit_file', {
+        workspace: 'api',
+        path: 'README.md',
+        old_string: read.content.slice(0, 1),
+        new_string: 'x',
+        expected_revision: read.revision,
+      });
+      expect(parseText(edit).error.code).toBe('READ_ONLY');
+      expectNoHostPaths(edit);
+
+      const created = parseText(await call('write_file', { workspace: 'web', path: 'new.txt', content: 'web\n' }));
+      expect(created.created).toBe(true);
+      const edited = parseText(
+        await call('edit_file', {
+          workspace: 'web',
+          path: 'new.txt',
+          old_string: 'web',
+          new_string: 'web2',
+          expected_revision: created.revision,
+        }),
+      );
+      expect(edited.replacements).toBe(1);
+      expect(parseText(await call('read_file', { workspace: 'api', path: 'new.txt' })).error.code).toBe('FILE_NOT_FOUND');
+    });
+
+    it('records the read-only workspace in the audit log', async () => {
+      await call('write_file', { workspace: 'api', path: 'audit.txt', content: 'x' });
+      const records = session
+        .stderr()
+        .split('\n')
+        .filter((line) => line.startsWith('{'))
+        .map((line) => JSON.parse(line));
+      expect(records.find((record) => record.tool === 'write_file' && record.path === 'audit.txt')).toMatchObject({
+        workspace: 'api',
+        ok: false,
+        error_code: 'READ_ONLY',
+      });
     });
   });
 
