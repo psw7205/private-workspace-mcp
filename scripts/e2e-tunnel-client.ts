@@ -42,14 +42,14 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function startProxy(workspace: string, scratch: string, name: string) {
+async function startProxy(workspaceEnv: Record<string, string>, scratch: string, name: string) {
   const urlFile = path.join(scratch, `${name}.json`);
   let stderr = '';
   const proxy = spawn(
     'tunnel-client',
     ['dev', 'proxy', '--mcp-command', `${process.execPath} ${serverEntry}`, '--url-file', urlFile],
     {
-      env: { ...process.env, WORKSPACE_ROOT: workspace, WORKSPACE_MODE: 'read-write' },
+      env: { ...process.env, ...workspaceEnv, WORKSPACE_MODE: 'read-write' },
       stdio: ['ignore', 'ignore', 'pipe'],
     },
   );
@@ -118,6 +118,33 @@ async function exercise(mcpUrl: string, versionNegotiation: ClientOptions['versi
   await client.close();
 }
 
+/** WORKSPACE_ROOTS (ADR-008): one tunnel-client child serves both workspaces, selected per call. */
+async function exerciseMulti(mcpUrl: string): Promise<void> {
+  const client = new Client({ name: 'pwmcp-e2e', version: '0.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+  await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
+
+  const { tools } = await client.listTools();
+  const read = tools.find((tool) => tool.name === 'read_file');
+  assert.deepEqual((read?.inputSchema.properties?.workspace as { enum?: string[] } | undefined)?.enum, ['api', 'web']);
+  const info = text(await client.callTool({ name: 'get_workspace_info', arguments: {} }));
+  assert.deepEqual(info.workspaces, [{ name: 'api' }, { name: 'web' }]);
+
+  const created = text(
+    await client.callTool({ name: 'write_file', arguments: { workspace: 'web', path: 'only-web.md', content: '# web\n' } }),
+  );
+  assert.equal(created.created, true);
+  const missing = await client.callTool({ name: 'read_file', arguments: { workspace: 'api', path: 'only-web.md' } });
+  assert.equal(text(missing).error.code, 'FILE_NOT_FOUND');
+  for (const workspace of ['api', 'web']) {
+    const escaped = await client.callTool({ name: 'read_file', arguments: { workspace, path: '../outside/private.txt' } });
+    assert.equal(text(escaped).error.code, 'PATH_OUTSIDE_WORKSPACE');
+  }
+  const unknown = await client.callTool({ name: 'read_file', arguments: { workspace: 'nope', path: 'README.md' } });
+  assert.equal((unknown as { isError?: boolean }).isError, true);
+  log('multi: workspace enum, per-workspace isolation, escape and unknown workspace rejected');
+  await client.close();
+}
+
 async function stopAndCheckChild(proxy: ChildProcess, childPid: number, signal: NodeJS.Signals): Promise<void> {
   assert.ok(isAlive(childPid));
   proxy.kill(signal);
@@ -129,7 +156,9 @@ async function main(): Promise<void> {
   const scratch = await mkdtemp(path.join(tmpdir(), 'pwmcp-e2e-'));
   const workspace = path.join(scratch, 'workspace');
   const outside = path.join(scratch, 'outside');
+  const web = path.join(scratch, 'web');
   await mkdir(workspace);
+  await mkdir(web);
   await mkdir(outside);
   await writeFile(path.join(workspace, 'README.md'), '# e2e\n');
   await writeFile(path.join(workspace, '.env'), 'SECRET=1\n');
@@ -140,7 +169,7 @@ async function main(): Promise<void> {
   try {
     // serveStdio pins the stdio connection to the era of its first request, and tunnel-client
     // multiplexes all callers onto one child, so each era gets its own tunnel-client here.
-    const legacy = await startProxy(workspace, scratch, 'legacy');
+    const legacy = await startProxy({ WORKSPACE_ROOT: workspace }, scratch, 'legacy');
     proxies.push(legacy.proxy);
     log(`tunnel-client dev proxy up at ${legacy.mcpUrl}, MCP child pid ${legacy.childPid}`);
     await exercise(legacy.mcpUrl, undefined, 'legacy');
@@ -148,10 +177,16 @@ async function main(): Promise<void> {
     assert.ok(!legacy.stderr().includes('SECRET=1'), 'file content must not be logged');
     await stopAndCheckChild(legacy.proxy, legacy.childPid, 'SIGTERM');
 
-    const modern = await startProxy(workspace, scratch, 'modern');
+    const modern = await startProxy({ WORKSPACE_ROOT: workspace }, scratch, 'modern');
     proxies.push(modern.proxy);
     await exercise(modern.mcpUrl, { mode: { pin: '2026-07-28' } }, 'modern');
     await stopAndCheckChild(modern.proxy, modern.childPid, 'SIGKILL');
+
+    const multi = await startProxy({ WORKSPACE_ROOTS: `api=${workspace},web=${web}` }, scratch, 'multi');
+    proxies.push(multi.proxy);
+    await exerciseMulti(multi.mcpUrl);
+    assert.match(multi.stderr(), /"workspace":"web"/, 'audit records name the workspace');
+    await stopAndCheckChild(multi.proxy, multi.childPid, 'SIGTERM');
 
     assert.deepEqual(execFileSync('ls', [outside], { encoding: 'utf8' }).trim().split('\n'), ['private.txt']);
     log('PASS');

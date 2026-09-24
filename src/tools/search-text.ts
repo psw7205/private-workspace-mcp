@@ -3,8 +3,8 @@ import * as z from 'zod/v4';
 
 import { searchText } from '../filesystem/file-search.js';
 import { MAX_GLOB_LENGTH } from '../filesystem/glob.js';
-import { runTool, type ToolDeps } from './run-tool.js';
-import { pathSchema } from './schemas.js';
+import { guardFor, runTool, type ToolDeps } from './run-tool.js';
+import { pathSchema, workspaceShape } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -15,7 +15,8 @@ const outputSchema = z.object({
   scan_limit_reached: z.boolean(),
 });
 
-export function registerSearchText(server: McpServer, { config, guard, audit }: ToolDeps): void {
+export function registerSearchText(server: McpServer, deps: ToolDeps): void {
+  const { config, audit } = deps;
   const { maxDirectoryEntries, maxReadBytes, maxSearchFiles, requestTimeoutMs } = config.limits;
   const defaultLimit = Math.min(100, maxDirectoryEntries);
   server.registerTool(
@@ -29,6 +30,7 @@ export function registerSearchText(server: McpServer, { config, guard, audit }: 
         `Binary, non-UTF-8, and files over ${maxReadBytes} bytes are skipped, as are files ignored by .gitignore or .ignore unless \`include_ignored\` is true. ` +
         `A search visits at most ${maxSearchFiles} files; \`scan_limit_reached\` means narrow \`path\` or \`glob\`.`,
       inputSchema: z.object({
+        ...workspaceShape(config),
         path: pathSchema.default('.'),
         query: z
           .string()
@@ -50,10 +52,10 @@ export function registerSearchText(server: McpServer, { config, guard, audit }: 
       outputSchema,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ path, query, glob, case_sensitive, include_ignored, limit }, ctx) =>
-      runTool({ tool: 'search_text', path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {
+    async ({ workspace, path, query, glob, case_sensitive, include_ignored, limit }, ctx) =>
+      runTool({ tool: 'search_text', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {
         const { bytesRead, ...result } = await searchText(
-          guard,
+          guardFor(deps, workspace),
           { maxSearchFiles, maxReadBytes, signal },
           { path, query, glob, caseSensitive: case_sensitive, includeIgnored: include_ignored, limit },
         );

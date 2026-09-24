@@ -26,8 +26,8 @@ describe('loadConfig', () => {
   it('defaults to read-only with documented limits', async () => {
     const config = await loadConfig({ WORKSPACE_ROOT: workspace });
     expect(config).toEqual({
-      root: await realpath(workspace),
-      name: 'my-project',
+      workspaces: [{ name: 'my-project', root: await realpath(workspace) }],
+      multi: false,
       mode: 'read-only',
       limits: {
         maxReadBytes: 1_048_576,
@@ -53,7 +53,7 @@ describe('loadConfig', () => {
 
   it('canonicalizes a symlinked root', async () => {
     const config = await loadConfig({ WORKSPACE_ROOT: path.join(base, 'workspace-link') });
-    expect(config.root).toBe(await realpath(workspace));
+    expect(config.workspaces).toEqual([{ name: 'my-project', root: await realpath(workspace) }]);
   });
 
   it('reads explicit mode, name, and limits', async () => {
@@ -69,7 +69,7 @@ describe('loadConfig', () => {
       WORKSPACE_MAX_SEARCH_FILES: '40',
     });
     expect(config.mode).toBe('read-write');
-    expect(config.name).toBe('alias');
+    expect(config.workspaces[0]?.name).toBe('alias');
     expect(config.limits).toEqual({
       maxReadBytes: 10,
       maxWriteBytes: 20,
@@ -141,10 +141,84 @@ describe('loadConfig', () => {
       });
       try {
         await expect(loadConfig({ WORKSPACE_ROOT: path.parse(process.cwd()).root })).rejects.toThrow(/WORKSPACE_ROOT/);
-        await expect(loadConfig({ WORKSPACE_ROOT: workspace })).resolves.toMatchObject({ root: await realpath(workspace) });
+        await expect(loadConfig({ WORKSPACE_ROOT: workspace })).resolves.toMatchObject({
+          workspaces: [{ root: await realpath(workspace) }],
+        });
       } finally {
         spy.mockRestore();
       }
+    });
+  });
+
+  describe('WORKSPACE_ROOTS', () => {
+    let api: string;
+    let web: string;
+
+    beforeAll(async () => {
+      api = path.join(base, 'api');
+      web = path.join(base, 'web');
+      await mkdir(path.join(api, 'nested'), { recursive: true });
+      await mkdir(web);
+      await symlink(api, path.join(base, 'api-link'), 'dir');
+    });
+
+    it('configures named canonical roots that tools select by name', async () => {
+      const config = await loadConfig({ WORKSPACE_ROOTS: ` api=${api} , web_2=${path.join(base, 'workspace-link')} ` });
+      expect(config.multi).toBe(true);
+      expect(config.workspaces).toEqual([
+        { name: 'api', root: await realpath(api) },
+        { name: 'web_2', root: await realpath(workspace) },
+      ]);
+      expect(config.mode).toBe('read-only');
+    });
+
+    it('keeps the argument even for a single entry', async () => {
+      const config = await loadConfig({ WORKSPACE_ROOTS: `api=${api}` });
+      expect(config).toMatchObject({ multi: true, workspaces: [{ name: 'api' }] });
+    });
+
+    it('splits each entry at the first "="', async () => {
+      const odd = path.join(base, 'a=b');
+      await mkdir(odd, { recursive: true });
+      const config = await loadConfig({ WORKSPACE_ROOTS: `odd=${odd}` });
+      expect(config.workspaces).toEqual([{ name: 'odd', root: await realpath(odd) }]);
+    });
+
+    it.each([
+      ['an empty list', () => ','],
+      ['an entry without "="', () => `${api}`],
+      ['an empty name', () => `=${api}`],
+      ['an uppercase name', () => `Api=${api}`],
+      ['a name with a dot', () => `a.b=${api}`],
+      ['a name starting with "-"', () => `-api=${api}`],
+      ['a name over 64 characters', () => `${'a'.repeat(65)}=${api}`],
+      ['a duplicate name', () => `api=${api},api=${web}`],
+      ['a relative root', () => 'api=relative/path'],
+      ['a missing root', () => 'api=/nonexistent/pwmcp-root'],
+      ['a root that is a file', () => `api=${path.join(base, 'file.txt')}`],
+      ['the home directory', () => `api=${api},home=${os.homedir()}`],
+      ['the same root twice', () => `api=${api},again=${api}`],
+      ['the same root through a symlink', () => `api=${api},alias=${path.join(base, 'api-link')}`],
+      ['a root inside another', () => `api=${api},nested=${path.join(api, 'nested')}`],
+      ['a root containing another', () => `nested=${path.join(api, 'nested')},parent=${base}`],
+    ])('rejects %s', async (_label, roots) => {
+      await expect(loadConfig({ WORKSPACE_ROOTS: roots() })).rejects.toThrow(/WORKSPACE_ROOTS/);
+    });
+
+    it.each([
+      ['WORKSPACE_ROOT', () => ({ WORKSPACE_ROOT: workspace })],
+      ['WORKSPACE_NAME', () => ({ WORKSPACE_NAME: 'alias' })],
+    ])('refuses to combine with %s', async (_label, extra) => {
+      await expect(loadConfig({ WORKSPACE_ROOTS: `api=${api}`, ...extra() })).rejects.toThrow(/WORKSPACE_ROOTS/);
+    });
+
+    it('requires the audit log outside every root', async () => {
+      await expect(
+        loadConfig({ WORKSPACE_ROOTS: `api=${api},web=${web}`, WORKSPACE_AUDIT_LOG: path.join(web, 'audit.jsonl') }),
+      ).rejects.toThrow(/WORKSPACE_AUDIT_LOG/);
+      await expect(
+        loadConfig({ WORKSPACE_ROOTS: `api=${api},web=${web}`, WORKSPACE_AUDIT_LOG: path.join(base, 'audit.jsonl') }),
+      ).resolves.toMatchObject({ audit: { path: path.join(await realpath(base), 'audit.jsonl') } });
     });
   });
 

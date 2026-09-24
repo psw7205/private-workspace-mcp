@@ -33,7 +33,8 @@ async function main(): Promise<void> {
   // The parent (tunnel-client) closing our stdin means the connection is over.
   process.stdin.on('end', shutdown);
 
-  console.error(`${SERVER_NAME} listening on stdio (workspace "${config.name}", ${config.mode})`);
+  const names = config.workspaces.map(({ name }) => `"${name}"`).join(', ');
+  console.error(`${SERVER_NAME} listening on stdio (${config.multi ? 'workspaces' : 'workspace'} ${names}, ${config.mode})`);
 }
 
 void main();

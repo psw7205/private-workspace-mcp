@@ -2,8 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { editTextFile } from '../filesystem/file-editor.js';
-import { runTool, type ToolDeps } from './run-tool.js';
-import { pathSchema } from './schemas.js';
+import { guardFor, runTool, type ToolDeps } from './run-tool.js';
+import { pathSchema, workspaceShape } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -12,7 +12,8 @@ const outputSchema = z.object({
   revision: z.string(),
 });
 
-export function registerEditFile(server: McpServer, { config, guard, audit }: ToolDeps): void {
+export function registerEditFile(server: McpServer, deps: ToolDeps): void {
+  const { config, audit } = deps;
   const { maxReadBytes, maxWriteBytes, requestTimeoutMs } = config.limits;
   server.registerTool(
     'edit_file',
@@ -25,6 +26,7 @@ export function registerEditFile(server: McpServer, { config, guard, audit }: To
         'Pass the `revision` from read_file as `expected_revision`; the result returns the new revision for a follow-up edit. ' +
         `Files over ${maxReadBytes} bytes cannot be edited. Fails with READ_ONLY unless the operator enabled read-write mode.`,
       inputSchema: z.object({
+        ...workspaceShape(config),
         path: pathSchema,
         old_string: z.string().min(1).describe('Exact text to replace'),
         new_string: z.string().describe('Replacement text'),
@@ -34,10 +36,10 @@ export function registerEditFile(server: McpServer, { config, guard, audit }: To
       outputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ path, old_string, new_string, expected_revision, replace_all }, ctx) =>
-      runTool({ tool: 'edit_file', path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
+    async ({ workspace, path, old_string, new_string, expected_revision, replace_all }, ctx) =>
+      runTool({ tool: 'edit_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
         const result = await editTextFile(
-          guard,
+          guardFor(deps, workspace),
           { mode: config.mode, maxReadBytes, maxWriteBytes },
           { path, oldString: old_string, newString: new_string, expectedRevision: expected_revision, replaceAll: replace_all },
         );

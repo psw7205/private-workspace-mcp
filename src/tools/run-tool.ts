@@ -7,6 +7,11 @@ import type { PathGuard } from '../filesystem/path-guard.js';
 
 export interface RunToolOptions {
   tool: string;
+  /**
+   * The raw `workspace` argument. Handlers see it as `unknown` because the schema field
+   * exists only in multi mode; the SDK has validated it by then. Recorded when a string.
+   */
+  workspace?: unknown;
   path?: string;
   requestId: string | number;
   timeoutMs: number;
@@ -33,6 +38,7 @@ export async function runTool<T extends Record<string, unknown>>(
     timestamp: new Date().toISOString(),
     request_id: String(options.requestId),
     tool: options.tool,
+    ...(typeof options.workspace === 'string' ? { workspace: options.workspace } : {}),
     ...(options.path !== undefined ? { path: options.path } : {}),
   };
   const elapsed = () => Math.round(performance.now() - startedAt);
@@ -84,6 +90,16 @@ export async function runTool<T extends Record<string, unknown>>(
 
 export interface ToolDeps {
   config: Config;
-  guard: PathGuard;
+  /** One guard per configured workspace, keyed by name. */
+  guards: ReadonlyMap<string, PathGuard>;
   audit: AuditSink;
+}
+
+/** The guard for the `workspace` argument in multi mode, or the only workspace's guard otherwise. */
+export function guardFor({ config, guards }: ToolDeps, workspace: unknown): PathGuard {
+  const name = config.multi ? workspace : config.workspaces[0]?.name;
+  const guard = typeof name === 'string' ? guards.get(name) : undefined;
+  // Unreachable: the input schema only accepts configured names. Surfaces as INTERNAL_ERROR.
+  if (guard === undefined) throw new Error('no guard for the requested workspace');
+  return guard;
 }

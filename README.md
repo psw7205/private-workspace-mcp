@@ -38,7 +38,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 
 | tool | 설명 |
 |------|------|
-| `get_workspace_info` | workspace 이름, mode, platform, limits. host 절대 경로는 반환하지 않음 |
+| `get_workspace_info` | workspace 이름(`WORKSPACE_ROOTS`면 `workspaces` 목록), mode, platform, limits. host 절대 경로는 반환하지 않음 |
 | `list_directory` | `path`(기본 `.`), `depth`(기본 1), `limit`. 이름순, depth-first. symlink는 따라가지 않고 민감 파일과 특수 파일은 생략 |
 | `read_file` | UTF-8 텍스트 파일. `start_line`/`max_lines`로 line pagination. 파일 전체 기준 `revision`(`sha256:…`) 반환 |
 | `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성 |
@@ -46,7 +46,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `search_text` | `path` 아래 UTF-8 텍스트 파일에서 literal 문자열 검색(regex 아님). 줄마다 첫 match의 경로·줄·열·줄 내용 반환. `glob`, `case_sensitive`(기본 false), `include_ignored`, `limit`. binary·non-UTF-8·read limit 초과 파일은 건너뜀 |
 | `edit_file` | 기존 파일의 exact-match 문자열 교체(ADR-002). `old_string`은 한 번만 나와야 하고 여러 번이면 `replace_all`. `expected_revision` 필수, 새 `revision` 반환 |
 
-모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
+모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. `WORKSPACE_ROOTS`로 띄우면 `get_workspace_info`를 뺀 6개 tool이 필수 인자 `workspace`(설정한 이름의 enum)를 받고, path는 그 workspace root 기준이다(ADR-008). 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
 
 | code | 의미 |
 |------|------|
@@ -62,11 +62,11 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 
 ## 보안 모델
 
-- **workspace 고정**: root는 서버 설정(`WORKSPACE_ROOT`)으로만 정하고 startup 시 realpath로 고정한다. MCP Roots는 쓰지 않는다. root가 사실상 sandbox 경계이므로 filesystem root, home directory, home의 상위 directory는 startup에서 거부한다. agent 전용 directory를 root로 쓴다.
-- **단일 `PathGuard`**: 입력 문법 검사(`..`, 절대/drive/UNC 경로, Windows alias 거부) 후 realpath로 canonical 경로를 구해 containment를 판정한다. 문자열 prefix 비교는 쓰지 않는다.
+- **workspace 고정**: root는 서버 설정(`WORKSPACE_ROOT` 또는 `WORKSPACE_ROOTS`)으로만 정하고 startup 시 realpath로 고정한다. MCP Roots는 쓰지 않는다. root가 사실상 sandbox 경계이므로 filesystem root, home directory, home의 상위 directory는 startup에서 거부한다. 여러 root는 서로 겹칠 수 없다. agent 전용 directory를 root로 쓴다.
+- **`PathGuard`**: workspace마다 하나다. 입력 문법 검사(`..`, 절대/drive/UNC 경로, Windows alias 거부) 후 realpath로 canonical 경로를 구해 containment를 판정한다. 문자열 prefix 비교는 쓰지 않는다.
 - **민감 파일 deny**: `.env`, `.env.*`, `*.pem`, `*.key`, `.ssh`, `.aws`, `.gnupg`, `.npmrc`, `.netrc`, `credentials*`, `secret*`, `.git`, `.git-credentials`, `service-account*.json`, `id_rsa*`, `id_ed25519*`, `*.tfstate`, `*.tfstate.*`, `.kube`, `kubeconfig*`, `.docker`, `.pypirc`, `*.p12`, `*.pfx`. 입력 경로와 canonical 경로 양쪽에 case-insensitive로 적용한다. 운영자는 추가만 할 수 있다.
 - **안전한 write**: 기본 read-only. 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
-- **audit**: tool call마다 JSON Lines 1건(요청 id, tool, path, 성공 여부, 소요 시간, bytes, error code). 파일 내용과 secret은 기록하지 않는다.
+- **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, 성공 여부, 소요 시간, bytes, error code). 파일 내용과 secret은 기록하지 않는다.
 
 path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자나 container 같은 OS 권한이다(ADR-001 §11). 잔여 위험은 implementation notes 3절에 있다.
 
@@ -79,16 +79,17 @@ read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(pro
 
 | env | 기본값 | 설명 |
 |-----|--------|------|
-| `WORKSPACE_ROOT` | (필수) | 절대 경로. startup 시 realpath로 고정 |
-| `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write` |
-| `WORKSPACE_NAME` | root basename | `get_workspace_info`의 `name` |
+| `WORKSPACE_ROOT` | (이것 또는 `WORKSPACE_ROOTS` 필수) | 절대 경로. startup 시 realpath로 고정 |
+| `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,name2=/abs/path`. workspace 여러 개(ADR-008). 이름은 소문자·숫자·`-`·`_`(64자 이하), 각 항목은 첫 `=`에서 나누며 경로에 `,`는 쓸 수 없음. root끼리 겹치면 거부. `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓸 수 없음 |
+| `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write`. `WORKSPACE_ROOTS`면 모든 workspace에 공통 |
+| `WORKSPACE_NAME` | root basename | `get_workspace_info`의 `name` (`WORKSPACE_ROOT` 전용) |
 | `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이보다 큰 파일은 `FILE_TOO_LARGE` |
 | `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | write content 최대 크기 (UTF-8 bytes) |
 | `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 응답 최대 entry 수 |
 | `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
 | `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도) |
 | `WORKSPACE_MAX_SEARCH_FILES` | `10000` | `find_files`/`search_text` 한 번이 살펴보는 파일 수 상한 |
-| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
+| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. 모든 workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
 | `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
 | `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
 
@@ -135,11 +136,11 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
 - `<project>`는 agent 전용 directory의 절대 경로다(filesystem root와 home은 거부됨). `<audit-dir>`는 workspace 밖의 기존 directory다. 빼면 audit은 `tunnel-client` 로그로 간다.
 - node는 `$(mise which node)`로 절대 경로를 넣는다. `tunnel-client`를 띄우는 shell에 mise가 활성화돼 있지 않으면 PATH의 `node`가 Node 26이 아닐 수 있다. 경로와 mode를 바꾸려면 `tunnel-client profiles edit workspace-mcp`로 고친다.
 
-실행할 때마다 `.env` 값을 `CONTROL_PLANE_*`로 넘긴다. subshell에서 원래 이름을 지우므로 child에는 key가 전달되지 않는다.
+실행할 때마다 `.env`의 `API_KEY`를 `CONTROL_PLANE_API_KEY`로 넘긴다. subshell에서 원래 이름을 지우므로 child에는 key가 전달되지 않는다. tunnel ID는 `init`이 profile에 적어 두므로 넘기지 않는다. `tunnel-client` 설정 우선순위는 flags > 환경 변수 > profile YAML이라 `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어쓴다.
 
 ```sh
 ( set -a && . ./.env && set +a
-  export CONTROL_PLANE_TUNNEL_ID="$TUNNEL_ID" CONTROL_PLANE_API_KEY="$API_KEY"
+  export CONTROL_PLANE_API_KEY="$API_KEY"
   unset TUNNEL_ID API_KEY
   tunnel-client doctor --profile workspace-mcp --explain && exec tunnel-client run --profile workspace-mcp )
 ```
@@ -155,7 +156,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
   node:26-bookworm node /app/dist/index.js"
 ```
 
-`<repo>`는 `pnpm install`과 `pnpm build`를 마친 이 repo다. Linux host에서는 `-u`로 준 uid가 `<project>`의 파일을 읽고 쓸 수 있어야 하고, 새 파일은 그 uid 소유로 생긴다(Docker Desktop for Mac은 host 사용자로 매핑한다). `docker run` 단독 stdio 호출은 확인했지만 `tunnel-client` 경유는 아직 확인하지 않았다(implementation notes 6절).
+`<repo>`는 `pnpm install`과 `pnpm build`를 마친 이 repo다. Linux host에서는 `-u`로 준 uid가 `<project>`의 파일을 읽고 쓸 수 있어야 하고, 새 파일은 그 uid 소유로 생긴다(Docker Desktop for Mac은 host 사용자로 매핑한다). `WORKSPACE_ROOTS`를 쓰면 repo마다 `-v <repo-a>:/workspaces/api`처럼 mount하고 `-e WORKSPACE_ROOTS=api=/workspaces/api,web=/workspaces/web`을 준다. `docker run` 단독 stdio 호출은 확인했지만 `tunnel-client` 경유는 아직 확인하지 않았다(implementation notes 6절).
 
 `run`이 healthy인 동안 ChatGPT에서 connector를 만든다.
 
@@ -175,6 +176,9 @@ Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspa
 주의:
 
 - tunnel ID 하나에는 `tunnel-client` instance 하나만 실행한다. stdio child가 instance마다 따로 뜨기 때문이다.
+- 한 머신의 repo 여러 개는 tunnel 하나로 노출한다. `--mcp-command`의 `WORKSPACE_ROOT=<project>`를 `WORKSPACE_ROOTS=api=<repo-a>,web=<repo-b>`로 바꾸면 child 하나가 모든 repo를 다루고 model은 tool 인자 `workspace`로 repo를 고른다(ADR-008). repo를 더하거나 빼면 tool schema가 바뀌므로 daemon을 다시 띄우고 connector를 Refresh한다. mode는 모든 repo에 공통이고, 이 tunnel을 쓸 수 있는 사용자는 모든 repo에 접근한다.
+- repo마다 mode나 접근할 사람이 달라야 할 때만 tunnel, profile, daemon, connector를 따로 둔다. profile마다 `health.listen_addr` port(`8080`, `8081`, …)와 `WORKSPACE_AUDIT_LOG` 파일을 다르게 하고, 실행 명령의 `--profile`만 바꾼다. `tunnel-client`의 channel별 command(`--mcp.command channel=...`)는 OpenAI 쪽에서 channel을 고를 수단이 없어 쓰지 않는다.
+- 공통 상위 directory를 root로 잡으면 다른 repo까지 노출되고, root 밖을 가리키는 symlink는 `PATH_OUTSIDE_WORKSPACE`로 거부된다.
 - 여러 머신에서 쓸 때는 머신마다 tunnel과 connector를 따로 만든다. 같은 tunnel을 여러 머신에서 쓰려면 한 번에 한 머신에서만 daemon을 띄운다. 이때 connector는 그대로 쓸 수 있지만, 연결되는 workspace는 그 머신 profile의 `WORKSPACE_ROOT`다.
 - MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 tunnel-client에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로, 그럴 때는 `tunnel-client`를 재시작한다(implementation notes 4절).
 

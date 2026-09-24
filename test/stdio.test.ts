@@ -97,6 +97,7 @@ describe('stdio server', () => {
       expect(byName.search_text?.annotations?.readOnlyHint).toBe(true);
       expect(byName.write_file?.annotations?.destructiveHint).toBe(true);
       expect(byName.edit_file?.annotations?.destructiveHint).toBe(true);
+      for (const tool of tools) expect(tool.inputSchema.properties ?? {}).not.toHaveProperty('workspace');
     });
 
     it('describes the workspace without exposing the host path', async () => {
@@ -201,6 +202,99 @@ describe('stdio server', () => {
       expect(readAudit).toMatchObject({ event: 'tool_call', ok: true, bytes_read: 11 });
       expect(readAudit.request_id).toBeDefined();
       expect(session.stderr()).not.toContain('export {};');
+    });
+  });
+
+  describe('multiple workspaces (WORKSPACE_ROOTS)', () => {
+    let other: Fixture;
+    let session: Awaited<ReturnType<typeof connect>>;
+    const pathTools = ['edit_file', 'find_files', 'list_directory', 'read_file', 'search_text', 'write_file'];
+
+    beforeAll(async () => {
+      other = await createFixture();
+      session = await connect({
+        WORKSPACE_ROOTS: `api=${fixture.root},web=${other.root}`,
+        WORKSPACE_MODE: 'read-write',
+      });
+    });
+
+    afterAll(async () => {
+      await session.client.close();
+      await other.cleanup();
+    });
+
+    const call = (name: string, args: Record<string, unknown>) => session.client.callTool({ name, arguments: args });
+
+    it('requires a workspace argument limited to the configured names', async () => {
+      const { tools } = await session.client.listTools();
+      for (const tool of tools) {
+        if (!pathTools.includes(tool.name)) continue;
+        expect(tool.inputSchema.required, tool.name).toContain('workspace');
+        expect(tool.inputSchema.properties?.workspace, tool.name).toMatchObject({ enum: ['api', 'web'] });
+      }
+      const info = tools.find((tool) => tool.name === 'get_workspace_info');
+      expect(info?.inputSchema.properties ?? {}).not.toHaveProperty('workspace');
+    });
+
+    it('lists the workspaces without host paths', async () => {
+      const result = await call('get_workspace_info', {});
+      const info = parseText(result);
+      expect(info).toMatchObject({ workspaces: [{ name: 'api' }, { name: 'web' }], mode: 'read-write' });
+      expect(info).not.toHaveProperty('root');
+      expectNoHostPath(JSON.stringify(result), fixture);
+      expectNoHostPath(JSON.stringify(result), other);
+    });
+
+    it('keeps each call inside the selected workspace', async () => {
+      const created = parseText(await call('write_file', { workspace: 'web', path: 'only-web.txt', content: 'web\n' }));
+      expect(created.created).toBe(true);
+      expect(parseText(await call('read_file', { workspace: 'web', path: 'only-web.txt' })).content).toBe('web\n');
+
+      const missing = await call('read_file', { workspace: 'api', path: 'only-web.txt' });
+      expect(parseText(missing).error.code).toBe('FILE_NOT_FOUND');
+      const found = parseText(await call('find_files', { workspace: 'api', pattern: '**/only-web.txt' }));
+      expect(found.files).toEqual([]);
+      const searched = parseText(await call('search_text', { workspace: 'api', query: 'web' }));
+      expect(searched.matches).toEqual([]);
+    });
+
+    it('applies escape and deny checks per workspace without host paths', async () => {
+      for (const workspace of ['api', 'web']) {
+        for (const [args, code] of [
+          [{ path: '../outside/private.txt' }, 'PATH_OUTSIDE_WORKSPACE'],
+          [{ path: 'link-outside-file' }, 'PATH_OUTSIDE_WORKSPACE'],
+          [{ path: '.env' }, 'PATH_BLOCKED'],
+        ] as const) {
+          const result = await call('read_file', { workspace, ...args });
+          expect(parseText(result).error.code).toBe(code);
+          expectNoHostPath(JSON.stringify(result), fixture);
+          expectNoHostPath(JSON.stringify(result), other);
+        }
+      }
+    });
+
+    it.each([
+      ['a missing workspace', { path: 'README.md' }],
+      ['an unknown workspace', { workspace: 'nope', path: 'README.md' }],
+    ])('rejects %s', async (_label, args) => {
+      const result = await call('read_file', args);
+      expect((result as ToolText).isError).toBe(true);
+      expectNoHostPath(JSON.stringify(result), fixture);
+      expectNoHostPath(JSON.stringify(result), other);
+    });
+
+    it('records the workspace in the audit log', async () => {
+      await call('read_file', { workspace: 'api', path: 'src/index.ts' });
+      const records = session
+        .stderr()
+        .split('\n')
+        .filter((line) => line.startsWith('{'))
+        .map((line) => JSON.parse(line));
+      expect(records.find((record) => record.tool === 'read_file' && record.path === 'src/index.ts')).toMatchObject({
+        workspace: 'api',
+        ok: true,
+      });
+      expect(records.find((record) => record.tool === 'get_workspace_info')).not.toHaveProperty('workspace');
     });
   });
 

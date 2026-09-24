@@ -2,8 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { writeTextFile } from '../filesystem/file-writer.js';
-import { runTool, type ToolDeps } from './run-tool.js';
-import { pathSchema } from './schemas.js';
+import { guardFor, runTool, type ToolDeps } from './run-tool.js';
+import { pathSchema, workspaceShape } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -12,7 +12,8 @@ const outputSchema = z.object({
   revision: z.string(),
 });
 
-export function registerWriteFile(server: McpServer, { config, guard, audit }: ToolDeps): void {
+export function registerWriteFile(server: McpServer, deps: ToolDeps): void {
+  const { config, audit } = deps;
   const { maxReadBytes, maxWriteBytes, requestTimeoutMs } = config.limits;
   server.registerTool(
     'write_file',
@@ -26,6 +27,7 @@ export function registerWriteFile(server: McpServer, { config, guard, audit }: T
         `Content is limited to ${maxWriteBytes} bytes, and files over ${maxReadBytes} bytes cannot be replaced. ` +
         'Fails with READ_ONLY unless the operator enabled read-write mode.',
       inputSchema: z.object({
+        ...workspaceShape(config),
         path: pathSchema,
         content: z.string().describe('Complete new file content'),
         expected_revision: z
@@ -36,10 +38,10 @@ export function registerWriteFile(server: McpServer, { config, guard, audit }: T
       outputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ path, content, expected_revision }, ctx) =>
-      runTool({ tool: 'write_file', path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
+    async ({ workspace, path, content, expected_revision }, ctx) =>
+      runTool({ tool: 'write_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {
         const result = await writeTextFile(
-          guard,
+          guardFor(deps, workspace),
           { mode: config.mode, maxReadBytes, maxWriteBytes },
           { path, content, expectedRevision: expected_revision },
         );

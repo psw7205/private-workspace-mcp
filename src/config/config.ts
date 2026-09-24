@@ -24,10 +24,18 @@ export interface AuditConfig {
   maxBytes: number;
 }
 
-export interface Config {
+export interface Workspace {
+  /** Returned to clients and, in multi mode, the value of the tools' `workspace` argument. */
+  name: string;
   /** Canonical absolute path. Never returned to MCP clients. */
   root: string;
-  name: string;
+}
+
+export interface Config {
+  /** At least one; roots never overlap. */
+  workspaces: Workspace[];
+  /** Set by WORKSPACE_ROOTS: tools take a `workspace` argument (ADR-008). */
+  multi: boolean;
   mode: WorkspaceMode;
   limits: Limits;
   audit: AuditConfig;
@@ -37,6 +45,8 @@ export interface Config {
 
 // setTimeout clamps larger delays to 1 ms, which would time out every tool call.
 const MAX_TIMER_MS = 2_147_483_647;
+
+const WORKSPACE_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 const LIMIT_ENV: Record<keyof Limits, [name: string, fallback: number, max?: number]> = {
   maxReadBytes: ['WORKSPACE_MAX_READ_BYTES', 1_048_576],
@@ -49,15 +59,8 @@ const LIMIT_ENV: Record<keyof Limits, [name: string, fallback: number, max?: num
 
 /** Reads configuration from the environment and fails closed on any invalid value. */
 export async function loadConfig(env: Record<string, string | undefined>): Promise<Config> {
-  const rawRoot = env.WORKSPACE_ROOT;
-  if (!rawRoot) throw new Error('WORKSPACE_ROOT is required');
-  if (!path.isAbsolute(rawRoot)) throw new Error('WORKSPACE_ROOT must be an absolute path');
-
-  const root = await realpath(rawRoot).catch(() => {
-    throw new Error('WORKSPACE_ROOT does not exist or is not accessible');
-  });
-  if (!(await stat(root)).isDirectory()) throw new Error('WORKSPACE_ROOT must be a directory');
-  await assertNarrowRoot(root);
+  const multi = Boolean(env.WORKSPACE_ROOTS);
+  const workspaces = env.WORKSPACE_ROOTS ? await loadWorkspaceRoots(env.WORKSPACE_ROOTS, env) : await loadWorkspaceRoot(env);
 
   const mode = env.WORKSPACE_MODE ?? 'read-only';
   if (mode !== 'read-only' && mode !== 'read-write') {
@@ -70,21 +73,68 @@ export async function loadConfig(env: Record<string, string | undefined>): Promi
   }
 
   const audit: AuditConfig = {
-    ...(env.WORKSPACE_AUDIT_LOG ? { path: await resolveAuditLogPath(env.WORKSPACE_AUDIT_LOG, root) } : {}),
+    ...(env.WORKSPACE_AUDIT_LOG ? { path: await resolveAuditLogPath(env.WORKSPACE_AUDIT_LOG, workspaces) } : {}),
     maxBytes: parsePositiveInteger('WORKSPACE_AUDIT_LOG_MAX_BYTES', env.WORKSPACE_AUDIT_LOG_MAX_BYTES, 10_485_760),
   };
 
   const denyPatterns = [...DEFAULT_DENY_PATTERNS, ...parseExtraDenyPatterns(env.WORKSPACE_EXTRA_DENY_PATTERNS)];
 
-  return { root, name: env.WORKSPACE_NAME || path.basename(root), mode, limits, audit, denyPatterns };
+  return { workspaces, multi, mode, limits, audit, denyPatterns };
+}
+
+async function loadWorkspaceRoot(env: Record<string, string | undefined>): Promise<Workspace[]> {
+  if (!env.WORKSPACE_ROOT) throw new Error('WORKSPACE_ROOT is required');
+  const root = await resolveRoot(env.WORKSPACE_ROOT, 'WORKSPACE_ROOT');
+  return [{ name: env.WORKSPACE_NAME || path.basename(root), root }];
+}
+
+/** Parses `name=/abs/path,...`, splitting each entry at its first `=`. */
+async function loadWorkspaceRoots(raw: string, env: Record<string, string | undefined>): Promise<Workspace[]> {
+  if (env.WORKSPACE_ROOT || env.WORKSPACE_NAME) {
+    throw new Error('WORKSPACE_ROOTS cannot be combined with WORKSPACE_ROOT or WORKSPACE_NAME');
+  }
+  const workspaces: Workspace[] = [];
+  for (const entry of raw.split(',')) {
+    const separator = entry.indexOf('=');
+    const name = entry.slice(0, Math.max(separator, 0)).trim();
+    if (!WORKSPACE_NAME_PATTERN.test(name)) {
+      throw new Error('WORKSPACE_ROOTS entries must be name=/absolute/path with names of lowercase letters, digits, "-", or "_" (at most 64)');
+    }
+    if (workspaces.some((workspace) => workspace.name === name)) {
+      throw new Error(`WORKSPACE_ROOTS names workspace "${name}" twice`);
+    }
+    const label = `WORKSPACE_ROOTS entry "${name}"`;
+    workspaces.push({ name, root: await resolveRoot(entry.slice(separator + 1).trim(), label) });
+  }
+
+  // Overlapping roots would give one file two names and let workspace-specific checks disagree.
+  for (const [index, a] of workspaces.entries()) {
+    for (const b of workspaces.slice(index + 1)) {
+      if (relativeInside(a.root, b.root) !== undefined || relativeInside(b.root, a.root) !== undefined) {
+        throw new Error(`WORKSPACE_ROOTS entries "${a.name}" and "${b.name}" overlap`);
+      }
+    }
+  }
+  return workspaces;
+}
+
+/** Returns the canonical directory for `raw`; `label` names the setting in errors. */
+async function resolveRoot(raw: string, label: string): Promise<string> {
+  if (!path.isAbsolute(raw)) throw new Error(`${label} must be an absolute path`);
+  const root = await realpath(raw).catch(() => {
+    throw new Error(`${label} does not exist or is not accessible`);
+  });
+  if (!(await stat(root)).isDirectory()) throw new Error(`${label} must be a directory`);
+  await assertNarrowRoot(root, label);
+  return root;
 }
 
 /**
  * The root is the sandbox boundary, so refuse roots that expose the whole disk or the
  * home directory (`~/.ssh`, `~/.aws`, ...) instead of relying on the deny list.
  */
-async function assertNarrowRoot(root: string): Promise<void> {
-  const message = 'WORKSPACE_ROOT must not be the filesystem root, the home directory, or a parent of it';
+async function assertNarrowRoot(root: string, label: string): Promise<void> {
+  const message = `${label} must not be the filesystem root, the home directory, or a parent of it`;
   if (path.parse(root).root === root) throw new Error(message);
   let home: string;
   try {
@@ -96,15 +146,15 @@ async function assertNarrowRoot(root: string): Promise<void> {
   if (relativeInside(root, home) !== undefined) throw new Error(message);
 }
 
-/** The audit log must live outside the workspace so tools can neither read nor rewrite it. */
-async function resolveAuditLogPath(raw: string, root: string): Promise<string> {
+/** The audit log must live outside every workspace so tools can neither read nor rewrite it. */
+async function resolveAuditLogPath(raw: string, workspaces: Workspace[]): Promise<string> {
   if (!path.isAbsolute(raw)) throw new Error('WORKSPACE_AUDIT_LOG must be an absolute path');
   const parent = await realpath(path.dirname(raw)).catch(() => {
     throw new Error('WORKSPACE_AUDIT_LOG parent directory does not exist');
   });
   const file = path.join(parent, path.basename(raw));
-  if (relativeInside(root, file) !== undefined) {
-    throw new Error('WORKSPACE_AUDIT_LOG must be outside WORKSPACE_ROOT');
+  if (workspaces.some(({ root }) => relativeInside(root, file) !== undefined)) {
+    throw new Error('WORKSPACE_AUDIT_LOG must be outside every workspace root');
   }
   const info = await lstat(file).catch(() => undefined);
   if (info && !info.isFile()) throw new Error('WORKSPACE_AUDIT_LOG must be a regular file');

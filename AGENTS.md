@@ -51,7 +51,7 @@ pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-clien
 - MCP SDK `serveStdio`는 stdio connection을 첫 요청의 protocol era로 pin한다. OpenAI hosted 경로는 `2026-07-28` self-contained 요청을 보낸다(implementation notes 4절).
 - SDK client에서 version pin은 `versionNegotiation: { mode: { pin: '2026-07-28' } }` 형태다. `{ pin }`만 쓰면 조용히 무시되고 legacy로 연결된다.
 - `tunnel-client`는 child에 자기 환경 변수를 그대로 넘긴다. runtime key를 child에 넘기지 않으려면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
-- 로컬 `.env`(git ignore 대상)의 `TUNNEL_ID` / `API_KEY`를 tunnel-client에 쓸 때는 `CONTROL_PLANE_TUNNEL_ID` / `CONTROL_PLANE_API_KEY`로 매핑해 넘긴다. 값은 출력하지 않는다.
+- 로컬 `.env`(git ignore 대상)의 `TUNNEL_ID`는 `init --tunnel-id`로 profile에 넣고, `API_KEY`는 실행 시 `CONTROL_PLANE_API_KEY`로 넘긴다. `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어써서 profile이 여러 개일 때 tunnel이 섞인다. 값은 출력하지 않는다.
 
 ## Git
 

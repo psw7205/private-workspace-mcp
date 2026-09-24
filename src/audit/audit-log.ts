@@ -8,6 +8,8 @@ export interface AuditRecord {
   timestamp: string;
   request_id: string;
   tool: string;
+  /** Workspace name argument; only present in multi mode (ADR-008). */
+  workspace?: string;
   /** Path argument as sent by the client. */
   path?: string;
   ok: boolean;

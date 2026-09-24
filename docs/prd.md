@@ -856,6 +856,8 @@ path: src/index.ts
 
 각 workspace는 서로 다른 capability policy를 가질 수 있다.
 
+> **Amendment (2026-09-24):** 첫 단계는 ADR-008로 정한다. `WORKSPACE_ROOTS`로 이름과 root를 설정하고 tool은 `workspace` 인자를 받는다. capability policy(mode, limits, deny)는 우선 모든 workspace가 공유한다.
+
 ---
 
 # 17. 장기적인 제품 방향

@@ -2,8 +2,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 
 import { listDirectory } from '../filesystem/directory-lister.js';
-import { runTool, type ToolDeps } from './run-tool.js';
-import { pathSchema } from './schemas.js';
+import { guardFor, runTool, type ToolDeps } from './run-tool.js';
+import { pathSchema, workspaceShape } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -17,7 +17,8 @@ const outputSchema = z.object({
   truncated: z.boolean(),
 });
 
-export function registerListDirectory(server: McpServer, { config, guard, audit }: ToolDeps): void {
+export function registerListDirectory(server: McpServer, deps: ToolDeps): void {
+  const { config, audit } = deps;
   const { maxDepth, maxDirectoryEntries, requestTimeoutMs } = config.limits;
   server.registerTool(
     'list_directory',
@@ -27,6 +28,7 @@ export function registerListDirectory(server: McpServer, { config, guard, audit 
         'List entries of a workspace directory, sorted by name, depth-first. Symlinks are reported with type "symlink" and never followed. ' +
         'Sensitive files (for example .env, keys, .git) are omitted. `truncated` is true when the entry limit cut the listing short.',
       inputSchema: z.object({
+        ...workspaceShape(config),
         path: pathSchema.default('.'),
         depth: z
           .number()
@@ -46,9 +48,9 @@ export function registerListDirectory(server: McpServer, { config, guard, audit 
       outputSchema,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ path, depth, limit }, ctx) =>
-      runTool({ tool: 'list_directory', path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => ({
-        result: { ...(await listDirectory(guard, { path, depth, limit })) },
+    async ({ workspace, path, depth, limit }, ctx) =>
+      runTool({ tool: 'list_directory', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => ({
+        result: { ...(await listDirectory(guardFor(deps, workspace), { path, depth, limit })) },
       })),
   );
 }

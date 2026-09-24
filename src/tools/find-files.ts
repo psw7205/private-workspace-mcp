@@ -3,8 +3,8 @@ import * as z from 'zod/v4';
 
 import { findFiles } from '../filesystem/file-search.js';
 import { MAX_GLOB_LENGTH } from '../filesystem/glob.js';
-import { runTool, type ToolDeps } from './run-tool.js';
-import { pathSchema } from './schemas.js';
+import { guardFor, runTool, type ToolDeps } from './run-tool.js';
+import { pathSchema, workspaceShape } from './schemas.js';
 
 const outputSchema = z.object({
   path: z.string(),
@@ -14,7 +14,8 @@ const outputSchema = z.object({
   scan_limit_reached: z.boolean(),
 });
 
-export function registerFindFiles(server: McpServer, { config, guard, audit }: ToolDeps): void {
+export function registerFindFiles(server: McpServer, deps: ToolDeps): void {
+  const { config, audit } = deps;
   const { maxDirectoryEntries, maxReadBytes, maxSearchFiles, requestTimeoutMs } = config.limits;
   server.registerTool(
     'find_files',
@@ -30,6 +31,7 @@ export function registerFindFiles(server: McpServer, { config, guard, audit }: T
         'Symlinks are not followed and sensitive files are always omitted. ' +
         `A search visits at most ${maxSearchFiles} files; \`scan_limit_reached\` means narrow \`path\` or the pattern.`,
       inputSchema: z.object({
+        ...workspaceShape(config),
         path: pathSchema.default('.'),
         pattern: z.string().min(1).max(MAX_GLOB_LENGTH).describe('Glob relative to `path`, for example `src/**/*.test.ts`'),
         limit: z
@@ -44,11 +46,11 @@ export function registerFindFiles(server: McpServer, { config, guard, audit }: T
       outputSchema,
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ path, pattern, limit, include_ignored }, ctx) =>
-      runTool({ tool: 'find_files', path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => ({
+    async ({ workspace, path, pattern, limit, include_ignored }, ctx) =>
+      runTool({ tool: 'find_files', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => ({
         result: {
           ...(await findFiles(
-            guard,
+            guardFor(deps, workspace),
             { maxSearchFiles, maxReadBytes, signal },
             { path, pattern, limit, includeIgnored: include_ignored },
           )),

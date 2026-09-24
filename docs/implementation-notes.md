@@ -70,6 +70,16 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 | M30 | 무결성 | release는 CI에서만 build. tag와 `package.json` version이 다르면 실패. `SHA256SUMS`의 모든 파일에 `actions/attest`로 build provenance를 붙이고, 설치 시 `shasum -c`와 `gh attestation verify`로 확인. `SERVER_VERSION`은 stdio test가 `package.json`과 비교. bundle이 build 머신의 project 경로를 담으면 실패 | public repo라 attestation을 무료 plan에서도 쓸 수 있음. checksum은 같은 Release에 있어 asset 교체를 막지 못하므로 서명된 provenance로 보완 |
 | M31 | 설치 layout | `$HOME/.local/share/private-workspace-mcp/<version>/`에 풀고 `current` symlink를 profile이 가리킴 | `tunnel-client` profile은 절대 경로를 담으므로 한 번만 만들고, 업그레이드와 rollback은 symlink 교체로 끝냄 |
 
+### 1.2.5 Multi-workspace 결정 (2026-09-24, ADR-008)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M32 | 설정 형식 | `WORKSPACE_ROOTS=name=/abs,name2=/abs`. 항목은 `,`, 이름과 경로는 첫 `=`에서 나눔. 비어 있는 env는 설정 안 한 것으로 봄(다른 env와 같음). 항목이 하나여도 multi mode | 정책이 공통이라 env 한 줄로 충분하고 설정 파일 parser를 새로 만들지 않음. 첫 `=` 기준이라 Windows drive 경로와 `=`가 든 경로도 쓸 수 있음. 항목 수로 mode를 바꾸면 repo 하나를 뺄 때 schema가 모양째 바뀜 |
+| M33 | 이름 규칙 | `^[a-z0-9][a-z0-9_-]{0,63}$`, 중복 거부 | model 인자, audit, 오류 메시지에 그대로 들어가므로 escape가 필요 없는 문자만 허용 |
+| M34 | root 겹침 | canonical root끼리 같거나 포함 관계면 startup 거부. symlink로 같은 곳을 가리켜도 거부 | 겹치면 한 파일이 두 이름을 가져 workspace별 판단이 갈리고, path 기준 write lock(M14)은 유지되지만 audit에서 같은 파일이 두 이름으로 남음 |
+| M35 | `workspace` 인자 schema | 설정한 이름의 `z.enum`, 필수. `get_workspace_info`는 인자 없음. 모르는 이름과 누락은 SDK 입력 검증에서 `isError`로 거부되어 audit에 남지 않음(다른 입력 검증 실패와 같음) | `tools/list`만으로 선택지가 보이고 tool 안에 모르는 이름이 들어오지 않음. zod가 설정에 따라 생기는 field를 `unknown`으로 추론하므로 `runTool`과 `guardFor`가 runtime에 string으로 좁힘(cast 없음) |
+| M36 | single mode 호환 | `WORKSPACE_ROOT`면 tool schema, `get_workspace_info` 출력, audit이 이전과 같음 | 기존 profile을 그대로 씀 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -80,7 +90,8 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 
 | env | 기본값 | 설명 |
 |-----|--------|------|
-| `WORKSPACE_ROOT` | (필수) | 절대 경로. 존재하는 directory여야 하며 startup 시 realpath로 고정. filesystem root, home, home의 상위는 거부(M27) |
+| `WORKSPACE_ROOT` | (이것 또는 `WORKSPACE_ROOTS` 필수) | 절대 경로. 존재하는 directory여야 하며 startup 시 realpath로 고정. filesystem root, home, home의 상위는 거부(M27) |
+| `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,...`. 각 root에 `WORKSPACE_ROOT`와 같은 검사, 겹침 거부(M32~M34). `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓰면 거부 |
 | `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write` |
 | `WORKSPACE_NAME` | root basename | `get_workspace_info`에 노출되는 이름 |
 | `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이 크기를 넘는 파일은 read 거부 |
@@ -89,7 +100,7 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 | `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
 | `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도) |
 | `WORKSPACE_MAX_SEARCH_FILES` | `10000` | 검색 한 번이 순회 중 만나는 regular file 수 상한(M22) |
-| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
+| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. 모든 workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
 | `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
 | `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
 
@@ -152,6 +163,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 - ChatGPT UI (2026-09-23): ChatGPT 웹 Developer mode에서 인증 없음으로 만든 Secure MCP Tunnel connector 경유로 hosted `tools/call`을 확인했다(PRD 15-1). `get_workspace_info`, `list_directory`, `read_file`이 성공했고, `write_file`은 `read_file`로 받은 revision을 넘겨 기존 내용을 보존한 채 항목을 추가했다. `.env` read는 `PATH_BLOCKED`로 거부됐고 message에 host 경로가 없었다. audit 파일에는 7건이 권한 `0600`으로 기록됐다. connector를 OAuth로 만들면 ChatGPT가 "MCP server ... does not implement OAuth" 오류를 내며, 이때 요청은 child까지 오지 않는다
 - container 격리 (2026-09-23): `docker run -i --network none --read-only -u 12345:12345`(passwd entry 없음, `HOME=/`)로 `node:26-bookworm`에서 stdio로 직접 호출했다. startup이 M27 검사를 통과했고 `read_file`, `write_file`(새 파일 생성)이 성공했으며 audit 파일이 권한 `0600`으로 기록됐다
 - release bundle (2026-09-23): `pnpm bundle`이 4개 package(`@modelcontextprotocol/server`, `@modelcontextprotocol/core`, `zod`, `ignore`)를 묶어 891 KB `index.mjs`를 만들었다. 두 번 build한 `SHA256SUMS`가 같았다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 16개와 `pnpm e2e:tunnel`(legacy·modern 양쪽)이 통과했고, repo 밖 `node_modules`가 없는 directory에서도 실행됐다. release workflow는 actionlint만 통과했고 실제 tag 실행은 아직 하지 않았다
+- multi-workspace (2026-09-24, ADR-008): `pnpm test` 376개 통과. stdio test로 `WORKSPACE_ROOTS`의 `workspace` enum schema, workspace 간 격리, workspace별 escape·deny 거부, 모르는 이름과 누락 거부, audit의 `workspace` field, single mode schema에 `workspace`가 없음을 확인했다. `pnpm e2e:tunnel`에 multi case를 추가해 `tunnel-client` 0.0.14 `dev proxy` 경유(modern era)로 같은 항목이 통과했다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 23개도 통과했다. hosted(ChatGPT UI) 경로는 아직 확인하지 않았다
 - 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
 ## 7. Future TODO
@@ -163,4 +175,5 @@ PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은
 - 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
 - README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
+- ChatGPT UI에서 `WORKSPACE_ROOTS` connector로 model이 `workspace` 인자를 골라 호출하는지 확인(ADR-008)
 - M28 반영 후 CI Windows job 재실행 결과 확인. 첫 실행(2026-09-23)은 ubuntu·macOS 통과, Windows는 `NOT_A_DIRECTORY` test 1건 실패(M28)
