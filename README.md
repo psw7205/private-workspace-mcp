@@ -45,8 +45,9 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `find_files` | `path`(기본 `.`) 아래를 depth 제한 없이 glob으로 검색. 패턴은 `path` 기준 상대 경로에 적용(`**/*.ts`). `*`, `?`, `**`, `{a,b}`만 특수 문자(패턴 256자까지)이고 대소문자를 구분. `.`으로 시작하는 이름은 패턴에 명시해야 맞음. `.gitignore`/`.ignore` 대상은 `include_ignored: true`가 아니면 제외. 결과는 파일 경로와 크기 |
 | `search_text` | `path` 아래 UTF-8 텍스트 파일에서 literal 문자열 검색(regex 아님). 줄마다 첫 match의 경로·줄·열·줄 내용 반환. `glob`, `case_sensitive`(기본 false), `include_ignored`, `limit`. binary·non-UTF-8·read limit 초과 파일은 건너뜀 |
 | `edit_file` | 기존 파일의 exact-match 문자열 교체(ADR-002). `old_string`은 한 번만 나와야 하고 여러 번이면 `replace_all`. `expected_revision` 필수, 새 `revision` 반환 |
+| `multi_edit_file` | 한 파일에 `edits` 배열(최대 100개, 각 항목은 `edit_file`과 같은 `old_string`/`new_string`/`replace_all`)을 순서대로 적용하고 한 번에 쓴다. 뒤 edit는 앞 edit의 결과에 match한다. 하나라도 실패하면 파일은 바뀌지 않고 오류 message가 `edits[i]`로 실패한 edit를 가리킴. 전체·edit별 교체 횟수와 새 `revision` 반환 |
 
-모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. `WORKSPACE_ROOTS`로 띄우면 `get_workspace_info`를 뺀 6개 tool이 필수 인자 `workspace`(설정한 이름의 enum)를 받고, path는 그 workspace root 기준이다(ADR-008). 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
+모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. `WORKSPACE_ROOTS`로 띄우면 `get_workspace_info`를 뺀 7개 tool이 필수 인자 `workspace`(설정한 이름의 enum)를 받고, path는 그 workspace root 기준이다(ADR-008). 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
 
 | code | 의미 |
 |------|------|
@@ -54,10 +55,10 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `PATH_BLOCKED` | 민감 파일 deny pattern에 걸림 |
 | `INVALID_PATH` | 경로 문법 오류, symlink 대상에 쓰기, 깨진 symlink 아래에 쓰기 |
 | `FILE_NOT_FOUND` / `NOT_A_FILE` / `NOT_A_DIRECTORY` | 대상 상태 불일치 |
-| `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일, lone surrogate가 든 write content |
+| `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일, lone surrogate가 든 write content나 `old_string`/`new_string` |
 | `READ_ONLY` | read-only mode에서 write 시도 |
 | `REVISION_CONFLICT` | 읽은 뒤 파일이 바뀜, 이미 존재하는 파일을 revision 없이 생성 시도 |
-| `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS` | `edit_file`의 `old_string`이 없음, 여러 번 나오는데 `replace_all`이 아님 |
+| `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS` | `edit_file`·`multi_edit_file`의 `old_string`이 없음, 여러 번 나오는데 `replace_all`이 아님 |
 | `PERMISSION_DENIED` / `TIMEOUT` / `INTERNAL_ERROR` | OS 권한, 시간 초과, 기타 (상세는 audit log에만) |
 
 ## 보안 모델
@@ -70,7 +71,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 
 path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자나 container 같은 OS 권한이다(ADR-001 §11). 잔여 위험은 implementation notes 3절에 있다.
 
-read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(prompt injection)가 `write_file`·`edit_file` 호출로 이어질 수 있다. revision 검사는 lost update를 막을 뿐 이 경로를 막지 않는다(model도 `read_file`로 revision을 얻는다). 서버는 두 tool에 `readOnlyHint: false`, `destructiveHint: true`를 선언한다. client 쪽 approval은 서버 권한 판단의 근거가 아닌 보조 방어로 쓴다(ADR-001 §14).
+read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(prompt injection)가 `write_file`·`edit_file` 호출로 이어질 수 있다(`multi_edit_file`도 같다). revision 검사는 lost update를 막을 뿐 이 경로를 막지 않는다(model도 `read_file`로 revision을 얻는다). 서버는 쓰기 tool 모두에 `readOnlyHint: false`, `destructiveHint: true`를 선언한다. client 쪽 approval은 서버 권한 판단의 근거가 아닌 보조 방어로 쓴다(ADR-001 §14).
 
 - Responses API: `require_approval: {"never": {"tool_names": ["get_workspace_info", "list_directory", "read_file", "find_files", "search_text"]}}`로 읽기 tool만 자동 실행하고 나머지는 승인을 받는다. 쓰기가 필요 없으면 `allowed_tools`로 읽기 tool만 노출하거나 서버를 read-only로 띄운다.
 - ChatGPT: write tool 호출 확인을 끄지 않는다.
@@ -164,7 +165,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 1. Settings > Security and login에서 Developer mode를 켠다.
 2. https://chatgpt.com/plugins 에서 새 connector를 추가하고 Connection으로 Tunnel을 골라 tunnel을 선택한다(또는 `tunnel_id` 입력).
 3. 인증은 **인증 없음(No authentication)**을 고른다. 이 서버는 OAuth를 구현하지 않으므로 OAuth를 고르면 "does not implement OAuth" 오류가 난다. 접근 통제는 OpenAI의 tunnel 권한이 맡는다(ADR 17 Amendment).
-4. tool 7개가 발견되는지 확인한다.
+4. tool 8개가 발견되는지 확인한다.
 
 connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다. 새 버전에서 tool 목록, description, schema가 바뀌었으면 다음 순서로 반영한다. 내부 동작만 바뀌었으면 1까지만 한다.
 

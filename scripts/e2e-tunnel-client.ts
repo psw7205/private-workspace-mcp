@@ -77,7 +77,7 @@ async function exercise(mcpUrl: string, versionNegotiation: ClientOptions['versi
   log(`${label}: connected, era=${client.getProtocolEra()} version=${client.getNegotiatedProtocolVersion()}`);
 
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['edit_file', 'find_files', 'get_workspace_info', 'list_directory', 'read_file', 'search_text', 'write_file']);
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['edit_file', 'find_files', 'get_workspace_info', 'list_directory', 'multi_edit_file', 'read_file', 'search_text', 'write_file']);
   log(`${label}: tools/list -> ${tools.map((tool) => tool.name).join(', ')}`);
 
   const info = text(await client.callTool({ name: 'get_workspace_info', arguments: {} }));
@@ -145,6 +145,26 @@ async function exerciseMulti(mcpUrl: string): Promise<void> {
   assert.equal(created.created, true);
   const denied = await client.callTool({ name: 'write_file', arguments: { workspace: 'api', path: 'only-web.md', content: '# api\n' } });
   assert.equal(text(denied).error.code, 'READ_ONLY');
+  const multiDenied = await client.callTool({
+    name: 'multi_edit_file',
+    arguments: { workspace: 'api', path: 'README.md', edits: [{ old_string: '#', new_string: '##' }], expected_revision: 'sha256:0' },
+  });
+  assert.equal(text(multiDenied).error.code, 'READ_ONLY');
+  const multiEdited = text(
+    await client.callTool({
+      name: 'multi_edit_file',
+      arguments: {
+        workspace: 'web',
+        path: 'only-web.md',
+        edits: [
+          { old_string: 'web', new_string: 'web2' },
+          { old_string: '# web2', new_string: '## web2' },
+        ],
+        expected_revision: created.revision,
+      },
+    }),
+  );
+  assert.deepEqual(multiEdited.edit_replacements, [1, 1]);
   const missing = await client.callTool({ name: 'read_file', arguments: { workspace: 'api', path: 'only-web.md' } });
   assert.equal(text(missing).error.code, 'FILE_NOT_FOUND');
   for (const workspace of ['api', 'web']) {
@@ -153,7 +173,7 @@ async function exerciseMulti(mcpUrl: string): Promise<void> {
   }
   const unknown = await client.callTool({ name: 'read_file', arguments: { workspace: 'nope', path: 'README.md' } });
   assert.equal((unknown as { isError?: boolean }).isError, true);
-  log('multi: workspace enum, per-workspace mode (api READ_ONLY, web writable), isolation, escape and unknown workspace rejected');
+  log('multi: workspace enum, per-workspace mode (api READ_ONLY, web writable, write_file and multi_edit_file), isolation, escape and unknown workspace rejected');
   await client.close();
 }
 

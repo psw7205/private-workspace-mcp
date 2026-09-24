@@ -7,6 +7,7 @@ import { createDenyMatcher } from '../policy/deny-list.js';
 import { registerEditFile } from '../tools/edit-file.js';
 import { registerFindFiles } from '../tools/find-files.js';
 import { registerListDirectory } from '../tools/list-directory.js';
+import { registerMultiEditFile } from '../tools/multi-edit-file.js';
 import { registerReadFile } from '../tools/read-file.js';
 import { registerSearchText } from '../tools/search-text.js';
 import { registerWorkspaceInfo } from '../tools/workspace-info.js';
@@ -30,6 +31,7 @@ export function createServerFactory(config: Config, audit: AuditSink = stderrAud
     registerReadFile(server, deps);
     registerWriteFile(server, deps);
     registerEditFile(server, deps);
+    registerMultiEditFile(server, deps);
     registerFindFiles(server, deps);
     registerSearchText(server, deps);
     return server;

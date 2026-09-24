@@ -3,7 +3,8 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { editTextFile } from '../src/filesystem/file-editor.js';
+import { editTextFile, editTextFileMulti, MAX_EDITS } from '../src/filesystem/file-editor.js';
+import type { WriteFileOptions } from '../src/filesystem/file-writer.js';
 import { PathGuard } from '../src/filesystem/path-guard.js';
 import { computeRevision } from '../src/filesystem/revision.js';
 import { createFixture, expectNoHostPath, expectWorkspaceError, type Fixture } from './helpers.js';
@@ -166,5 +167,229 @@ describe('editTextFile', () => {
       code,
     );
     expectNoHostPath(error.message, fixture);
+  });
+});
+
+describe('editTextFileMulti', () => {
+  let fixture: Fixture;
+  let guard: PathGuard;
+
+  beforeEach(async () => {
+    fixture = await createFixture();
+    guard = new PathGuard(fixture.realRoot);
+  });
+
+  afterEach(async () => {
+    await fixture.cleanup();
+  });
+
+  const inRoot = (relative: string) => path.join(fixture.root, relative);
+  const revisionOf = async (relative: string) => computeRevision(await readFile(inRoot(relative)));
+  type Edit = { oldString: string; newString: string; replaceAll?: boolean };
+  const multi = async (relative: string, edits: Edit[], options: WriteFileOptions = readWrite) =>
+    editTextFileMulti(guard, options, {
+      path: relative,
+      edits: edits.map((edit) => ({ replaceAll: false, ...edit })),
+      expectedRevision: await revisionOf(relative),
+    });
+
+  it('applies edits in order and returns per-edit counts', async () => {
+    await writeFile(inRoot('multi.txt'), 'a-b-a\n');
+    const result = await multi('multi.txt', [
+      { oldString: 'b', newString: 'c' },
+      { oldString: 'a', newString: 'x', replaceAll: true },
+    ]);
+    expect(await readFile(inRoot('multi.txt'), 'utf8')).toBe('x-c-x\n');
+    expect(result).toEqual({
+      path: 'multi.txt',
+      replacements: 3,
+      edit_replacements: [1, 2],
+      bytes_written: 6,
+      revision: computeRevision(Buffer.from('x-c-x\n')),
+    });
+  });
+
+  it('matches each old_string against the result of the earlier edits', async () => {
+    await multi('README.md', [
+      { oldString: 'readme', newString: 'guide' },
+      { oldString: '# guide', newString: '## guide' },
+    ]);
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('## guide\n');
+  });
+
+  it('changes nothing when a later edit finds no match, and names the edit', async () => {
+    const error = await expectWorkspaceError(
+      multi('README.md', [
+        { oldString: 'readme', newString: 'guide' },
+        { oldString: '#', newString: '##' },
+        { oldString: 'readme', newString: 'x' },
+      ]),
+      'EDIT_NO_MATCH',
+    );
+    expect(error.message).toContain('edits[2]');
+    expect(error.message).toContain('README.md');
+    expect(error.message).not.toContain('guide');
+    expectNoHostPath(error.message, fixture);
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+  });
+
+  it('reports EDIT_AMBIGUOUS for the edit that matches several times', async () => {
+    await writeFile(inRoot('dup.txt'), 'a-a-b\n');
+    const error = await expectWorkspaceError(
+      multi('dup.txt', [
+        { oldString: 'b', newString: 'c' },
+        { oldString: 'a', newString: 'x' },
+      ]),
+      'EDIT_AMBIGUOUS',
+    );
+    expect(error.message).toContain('edits[1]');
+    expectNoHostPath(error.message, fixture);
+    expect(await readFile(inRoot('dup.txt'), 'utf8')).toBe('a-a-b\n');
+  });
+
+  it('rejects an empty old_string with its index', async () => {
+    const error = await expectWorkspaceError(
+      multi('README.md', [
+        { oldString: 'readme', newString: 'x' },
+        { oldString: '', newString: 'y' },
+      ]),
+      'EDIT_NO_MATCH',
+    );
+    expect(error.message).toContain('edits[1]');
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+  });
+
+  it('refuses an edit that splits a surrogate pair even if a later edit rejoins it', async () => {
+    await writeFile(inRoot('emoji.txt'), 'a\u{1F600}b\n');
+    const error = await expectWorkspaceError(
+      multi('emoji.txt', [
+        { oldString: '\ud83d', newString: 'X' },
+        { oldString: 'X\ude00', newString: 'Y' },
+      ]),
+      'BINARY_FILE',
+    );
+    expect(error.message).toContain('edits[0]');
+    expect(await readFile(inRoot('emoji.txt'), 'utf8')).toBe('a\u{1F600}b\n');
+  });
+
+  it('refuses an old_string that matches across two surrogate pairs', async () => {
+    await writeFile(inRoot('emoji.txt'), '\u{1F600}\u{1F600}\n');
+    await expectWorkspaceError(multi('emoji.txt', [{ oldString: '\ude00\ud83d', newString: '' }]), 'BINARY_FILE');
+    expect(await readFile(inRoot('emoji.txt'), 'utf8')).toBe('\u{1F600}\u{1F600}\n');
+  });
+
+  it('refuses a lone surrogate in new_string', async () => {
+    const error = await expectWorkspaceError(
+      multi('README.md', [
+        { oldString: 'readme', newString: 'x' },
+        { oldString: 'x', newString: '\ud83d' },
+      ]),
+      'BINARY_FILE',
+    );
+    expect(error.message).toContain('edits[1]');
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+  });
+
+  it('checks the write limit on the final content', async () => {
+    await expectWorkspaceError(multi('README.md', [{ oldString: 'readme', newString: 'x'.repeat(40) }]), 'FILE_TOO_LARGE');
+    const result = await multi('README.md', [
+      { oldString: 'readme', newString: 'x'.repeat(40) },
+      { oldString: 'x'.repeat(40), newString: 'ok' },
+    ]).catch((error: unknown) => error);
+    // An intermediate result over the write limit is refused too, so edits cannot grow memory without bound.
+    expect(result).toMatchObject({ code: 'FILE_TOO_LARGE' });
+    expect((result as Error).message).toContain('edits[0]');
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+  });
+
+  it('refuses a replace_all that would build a string far over the write limit, before building it', async () => {
+    const limits = { mode: 'read-write', maxReadBytes: 1 << 20, maxWriteBytes: 1 << 20 } as const;
+    await writeFile(inRoot('big.txt'), 'a'.repeat(1 << 20));
+    // 1 MiB x 600 code units exceeds V8's maximum string length, so building it throws RangeError.
+    for (const call of [
+      () => multi('big.txt', [{ oldString: 'a', newString: 'b'.repeat(600), replaceAll: true }], limits),
+      async () =>
+        editTextFile(guard, limits, {
+          path: 'big.txt',
+          oldString: 'a',
+          newString: 'b'.repeat(600),
+          expectedRevision: await revisionOf('big.txt'),
+          replaceAll: true,
+        }),
+    ]) {
+      await expectWorkspaceError(call(), 'FILE_TOO_LARGE');
+    }
+  });
+
+  it('checks the path before the edit text', async () => {
+    await expectWorkspaceError(multi('.env', [{ oldString: '\ud83d', newString: 'x' }]), 'PATH_BLOCKED');
+  });
+
+  it('bounds the number of edits', async () => {
+    expect(MAX_EDITS).toBe(100);
+    const edits = Array.from({ length: MAX_EDITS + 1 }, () => ({ oldString: '#', newString: '#' }));
+    await expectWorkspaceError(multi('README.md', edits), 'EDIT_NO_MATCH');
+    await expectWorkspaceError(multi('README.md', []), 'EDIT_NO_MATCH');
+  });
+
+  it('rejects a stale revision and read-only mode', async () => {
+    await expectWorkspaceError(
+      editTextFileMulti(guard, readWrite, {
+        path: 'README.md',
+        edits: [{ oldString: 'readme', newString: 'x', replaceAll: false }],
+        expectedRevision: computeRevision(Buffer.from('stale')),
+      }),
+      'REVISION_CONFLICT',
+    );
+    await expectWorkspaceError(
+      multi('README.md', [{ oldString: 'readme', newString: 'x' }], { ...readWrite, mode: 'read-only' }),
+      'READ_ONLY',
+    );
+  });
+
+  it.each([
+    ['.env', 'PATH_BLOCKED'],
+    ['link-to-env', 'INVALID_PATH'],
+    ['link-outside-dir/private.txt', 'PATH_OUTSIDE_WORKSPACE'],
+  ] as const)('refuses to edit %j', async (input, code) => {
+    const error = await expectWorkspaceError(
+      editTextFileMulti(guard, readWrite, {
+        path: input,
+        edits: [{ oldString: 'x', newString: 'y', replaceAll: false }],
+        expectedRevision: computeRevision(Buffer.from('')),
+      }),
+      code,
+    );
+    expectNoHostPath(error.message, fixture);
+  });
+});
+
+describe('editTextFile surrogate boundaries', () => {
+  let fixture: Fixture;
+  let guard: PathGuard;
+
+  beforeEach(async () => {
+    fixture = await createFixture();
+    guard = new PathGuard(fixture.realRoot);
+  });
+
+  afterEach(async () => {
+    await fixture.cleanup();
+  });
+
+  it('refuses an old_string that matches across two surrogate pairs', async () => {
+    const target = path.join(fixture.root, 'emoji.txt');
+    await writeFile(target, '\u{1F600}\u{1F600}\n');
+    await expectWorkspaceError(
+      editTextFile(guard, readWrite, {
+        path: 'emoji.txt',
+        oldString: '\ude00\ud83d',
+        newString: '',
+        expectedRevision: computeRevision(await readFile(target)),
+        replaceAll: false,
+      }),
+      'BINARY_FILE',
+    );
+    expect(await readFile(target, 'utf8')).toBe('\u{1F600}\u{1F600}\n');
   });
 });

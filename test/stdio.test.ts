@@ -87,6 +87,7 @@ describe('stdio server', () => {
         'find_files',
         'get_workspace_info',
         'list_directory',
+        'multi_edit_file',
         'read_file',
         'search_text',
         'write_file',
@@ -97,8 +98,18 @@ describe('stdio server', () => {
       expect(byName.search_text?.annotations?.readOnlyHint).toBe(true);
       expect(byName.write_file?.annotations?.destructiveHint).toBe(true);
       expect(byName.edit_file?.annotations?.destructiveHint).toBe(true);
+      expect(byName.multi_edit_file?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect(byName.multi_edit_file?.inputSchema.properties?.edits).toMatchObject({ type: 'array', minItems: 1, maxItems: 100 });
+      // v0.1.0 edit_file input stays as released.
+      expect(Object.keys(byName.edit_file?.inputSchema.properties ?? {}).sort()).toEqual([
+        'expected_revision',
+        'new_string',
+        'old_string',
+        'path',
+        'replace_all',
+      ]);
       for (const tool of tools) expect(tool.inputSchema.properties ?? {}).not.toHaveProperty('workspace');
-      for (const name of ['write_file', 'edit_file']) {
+      for (const name of ['write_file', 'edit_file', 'multi_edit_file']) {
         expect(byName[name]?.description, name).toMatch(/Fails with READ_ONLY unless the operator enabled read-write mode\.$/);
       }
     });
@@ -148,6 +159,39 @@ describe('stdio server', () => {
       expect(edited).toMatchObject({ path: 'README.md', replacements: 1 });
       const reread = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'README.md' } }));
       expect(reread).toMatchObject({ content: '# v3\n', revision: edited.revision });
+
+      const failed = await session.client.callTool({
+        name: 'multi_edit_file',
+        arguments: {
+          path: 'README.md',
+          expected_revision: edited.revision,
+          edits: [
+            { old_string: 'v3', new_string: 'v4' },
+            { old_string: 'missing', new_string: 'x' },
+          ],
+        },
+      });
+      expect((failed as ToolText).isError).toBe(true);
+      expect(parseText(failed).error.code).toBe('EDIT_NO_MATCH');
+      expect(parseText(failed).error.message).toContain('edits[1]');
+      expectNoHostPath(JSON.stringify(failed), fixture);
+
+      const multi = parseText(
+        await session.client.callTool({
+          name: 'multi_edit_file',
+          arguments: {
+            path: 'README.md',
+            expected_revision: edited.revision,
+            edits: [
+              { old_string: 'v3', new_string: 'v4' },
+              { old_string: '# v4', new_string: '## v4' },
+            ],
+          },
+        }),
+      );
+      expect(multi).toMatchObject({ path: 'README.md', replacements: 2, edit_replacements: [1, 1] });
+      const final = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'README.md' } }));
+      expect(final).toMatchObject({ content: '## v4\n', revision: multi.revision });
     });
 
     it('returns classified errors for escapes and denied files without host paths', async () => {
@@ -212,7 +256,7 @@ describe('stdio server', () => {
   describe('multiple workspaces (WORKSPACE_ROOTS)', () => {
     let other: Fixture;
     let session: Awaited<ReturnType<typeof connect>>;
-    const pathTools = ['edit_file', 'find_files', 'list_directory', 'read_file', 'search_text', 'write_file'];
+    const pathTools = ['edit_file', 'find_files', 'list_directory', 'multi_edit_file', 'read_file', 'search_text', 'write_file'];
 
     beforeAll(async () => {
       other = await createFixture();
@@ -238,7 +282,7 @@ describe('stdio server', () => {
       }
       const info = tools.find((tool) => tool.name === 'get_workspace_info');
       expect(info?.inputSchema.properties ?? {}).not.toHaveProperty('workspace');
-      for (const name of ['write_file', 'edit_file']) {
+      for (const name of ['write_file', 'edit_file', 'multi_edit_file']) {
         const tool = tools.find((candidate) => candidate.name === name);
         expect(tool?.description, name).toMatch(/Writable workspaces: api, web\.$/);
       }
@@ -343,7 +387,7 @@ describe('stdio server', () => {
 
     it('names the writable workspaces in the write tool descriptions', async () => {
       const { tools } = await session.client.listTools();
-      for (const name of ['write_file', 'edit_file']) {
+      for (const name of ['write_file', 'edit_file', 'multi_edit_file']) {
         const tool = tools.find((candidate) => candidate.name === name);
         expect(tool?.description, name).toContain('Writable workspaces: web.');
         expect(tool?.annotations?.destructiveHint, name).toBe(true);
@@ -379,6 +423,30 @@ describe('stdio server', () => {
       );
       expect(edited.replacements).toBe(1);
       expect(parseText(await call('read_file', { workspace: 'api', path: 'new.txt' })).error.code).toBe('FILE_NOT_FOUND');
+
+      const multiDenied = await call('multi_edit_file', {
+        workspace: 'api',
+        path: 'README.md',
+        edits: [{ old_string: read.content.slice(0, 1), new_string: 'x' }],
+        expected_revision: read.revision,
+      });
+      expect(parseText(multiDenied).error.code).toBe('READ_ONLY');
+      expectNoHostPaths(multiDenied);
+      expect(parseText(await call('read_file', { workspace: 'api', path: 'README.md' })).revision).toBe(read.revision);
+
+      const multi = parseText(
+        await call('multi_edit_file', {
+          workspace: 'web',
+          path: 'new.txt',
+          edits: [
+            { old_string: 'web2', new_string: 'web3' },
+            { old_string: 'web3', new_string: 'web4' },
+          ],
+          expected_revision: edited.revision,
+        }),
+      );
+      expect(multi).toMatchObject({ replacements: 2, edit_replacements: [1, 1] });
+      expect(parseText(await call('read_file', { workspace: 'web', path: 'new.txt' })).content).toBe('web4\n');
     });
 
     it('records the read-only workspace in the audit log', async () => {
@@ -401,7 +469,7 @@ describe('stdio server', () => {
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe('2026-07-28');
       const { tools } = await session.client.listTools();
-      expect(tools).toHaveLength(7);
+      expect(tools).toHaveLength(8);
       const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'src/index.ts' } }));
       expect(read.content).toBe('export {};\n');
     } finally {

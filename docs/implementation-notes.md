@@ -88,6 +88,14 @@ ChatGPT에서 connector로 black-box 점검한 피드백 중 코드로 닫을 �
 | M38 | `get_workspace_info`와 description | multi mode 출력은 `{ workspaces: [{ name, mode }], platform, limits }`. top-level `mode`는 뺌. `write_file`·`edit_file` description의 마지막 문장은 multi mode에서 `Writable workspaces: <names>. Other workspaces fail with READ_ONLY.`(모두 쓰기 가능하면 뒤 문장은 생략, 쓰기 가능 workspace가 없으면 `Every workspace is read-only, so this fails with READ_ONLY.`). single mode 문장과 출력은 그대로. annotations는 그대로 | mode가 섞이면 top-level 값 하나는 항상 일부 workspace에 대해 틀림. description은 startup에 정해지는 정적 값이라 `tools/list`만으로 model이 쓰기 대상을 고를 수 있음. annotations는 tool 단위라 workspace별로 나눌 수 없어 가장 보수적인 `destructiveHint: true`를 유지 |
 | M39 | mode 전달 경로 | `Config.mode`를 없애고 `Workspace.mode`에 둠. server가 workspace마다 `{ guard, mode }`를 만들고, `selectWorkspace`가 `guardFor`와 같은 방식(multi면 `workspace` 인자, 아니면 유일한 workspace)으로 둘을 함께 고름. `write_file`·`edit_file`은 고른 값의 `mode`를 filesystem 모듈에 넘기고 `READ_ONLY` 판정은 기존대로 `file-writer`·`file-editor`에서 함 | guard와 mode를 따로 찾으면 서로 다른 workspace 값을 짝지을 수 있음. 한 번의 선택으로 묶어 불일치를 구조적으로 막음. read tool은 `guardFor`(=`selectWorkspace(...).guard`)를 그대로 씀 |
 
+### 1.2.7 Multi-edit 결정 (2026-09-24, ADR-002 Amendment)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M40 | interface | 새 tool `multi_edit_file`(`path`, `edits`, `expected_revision`). `edit_file`의 입력·출력은 v0.1.0 그대로. core는 `file-editor.ts`의 공통 함수 하나이고 `edit_file`은 edit 1개로 호출한다. annotations는 `edit_file`과 같다 | `edit_file`에 `edits`를 더하면 상호 배타를 schema로 표현할 수 없음(ADR-002 4절 Amendment). 공통 core라 두 tool의 match·쓰기 규칙이 갈라지지 않음 |
+| M41 | 적용 규칙 | edit를 순서대로 decode된 content에 적용하고, 뒤 edit는 앞 edit 결과에 match. 개수는 1~100(`MAX_EDITS`, schema와 core 양쪽). 실패 시 파일 무변경, message 앞에 `edits[i]: `(workspace 상대 경로만, `old_string` 내용은 넣지 않음). 개수 위반은 빈 `old_string`처럼 `EDIT_NO_MATCH`. 각 edit는 결과 문자열을 만들기 전에 `현재 길이 + 교체 횟수 × (new_string 길이 − old_string 길이)`(UTF-16 code unit)가 `max write bytes`를 넘으면 `FILE_TOO_LARGE`(`edit_file`도 적용). UTF-8 byte 수는 code unit 수 이상이라 들어갈 결과를 거부하지 않음. 마지막을 뺀 중간 결과는 만든 뒤 byte 수로 다시 검사하고, 최종 결과는 `writeTextFile`이 검사 | 사전 검사가 없으면 1 MiB 파일의 `replace_all` 한 번이 쓰기 전에 수백 MB 문자열을 만들고, V8 문자열 길이 상한을 넘으면 `RangeError`로 `INTERNAL_ERROR`가 됨. edit를 이어 붙이면 기하급수로 커짐. 새 error code를 만들지 않음 |
+| M42 | surrogate 경계 | 모든 edit의 `old_string`·`new_string`이 well-formed가 아니면 `BINARY_FILE`(`edit_file`도 적용). 이 검사는 `resolveForWrite` 뒤에 해서 deny·escape 대상 경로는 입력 text와 무관하게 `PATH_BLOCKED` 등 경로 오류가 먼저 나옴. 최종 content 검사(M25)는 그대로 둠 | decode된 content는 well-formed이므로 well-formed `old_string`은 code point 경계에서만 match한다. 따라서 중간 결과도 모두 well-formed다. 최종 검사만으로는 앞 edit가 쪼갠 pair를 뒤 edit가 다시 붙이는 경우나 `\ude00\ud83d`처럼 두 pair에 걸친 match를 막지 못했음 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다. 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -176,6 +184,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 - release `v0.1.0` (2026-09-23): tag push로 release workflow run 35818627892가 성공했고, GitHub Release에 `index.mjs`, `index.mjs.map`, `SHA256SUMS`, `THIRD_PARTY_LICENSES.txt`가 올라갔다. 2026-09-24에 repo 밖 임시 directory로 `gh release download v0.1.0`을 받아 `shasum -a 256 -c SHA256SUMS`(3개 파일 OK)와 파일별 `gh attestation verify --repo psw7205/private-workspace-mcp`(3개 모두 통과)를 확인했다. attestation 하나가 3개 파일을 subject로 담고 signer는 `release.yml@refs/tags/v0.1.0`이다. 내용을 바꾼 `index.mjs`는 verify가 실패했다
 - multi-workspace (2026-09-24, ADR-008): `pnpm test` 376개 통과. stdio test로 `WORKSPACE_ROOTS`의 `workspace` enum schema, workspace 간 격리, workspace별 escape·deny 거부, 모르는 이름과 누락 거부, audit의 `workspace` field, single mode schema에 `workspace`가 없음을 확인했다. `pnpm e2e:tunnel`에 multi case를 추가해 `tunnel-client` 0.0.14 `dev proxy` 경유(modern era)로 같은 항목이 통과했다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 23개도 통과했다. hosted(ChatGPT UI) 경로는 아직 확인하지 않았다
 - workspace별 mode (2026-09-24, ADR-008 Amendment): `pnpm test` 12 files, 391 tests 통과(config 65, stdio 27). config test로 `WORKSPACE_READ_WRITE`의 workspace별 mode, `WORKSPACE_MODE=read-write` 단독 시 전체 read-write, 거부 조건(single mode, `WORKSPACE_MODE` 동시 지정, 없는 이름, 중복, 빈 항목, 대소문자 다른 이름)을 확인했다. stdio test로 `workspaces[].mode`와 top-level `mode` 부재, description의 쓰기 가능 workspace 이름, read-only workspace의 `write_file`·`edit_file` `READ_ONLY`와 쓰기 가능 workspace의 성공, audit의 `workspace`·`error_code`, host 경로 비노출을 확인했다. single mode는 `main`과 tools/list·`get_workspace_info`·`READ_ONLY` 결과를 JSON으로 비교해 byte 단위로 같았다(read-only·read-write 양쪽). `pnpm e2e:tunnel` multi case를 `WORKSPACE_READ_WRITE=web`으로 바꿔 `tunnel-client` `dev proxy` 경유로 `api` 쓰기 `READ_ONLY`, `web` 쓰기 성공, audit의 `READ_ONLY` 기록이 통과했다
+- multi-edit (2026-09-24, M40~M42): `pnpm test` 12 files, 408개 통과(per-workspace mode 병합 후). unit test로 순차 적용, edit별 교체 횟수, 뒤 edit 실패 시 무변경과 `edits[i]` 표시, surrogate pair 분할(중간 분할 후 재결합, 두 pair에 걸친 match, lone surrogate `new_string`), 중간·최종 write limit, 결과를 만들기 전 크기 사전 검사(1 MiB `replace_all`이 `RangeError` 대신 `FILE_TOO_LARGE`), 경로 오류가 surrogate 검사보다 먼저 나옴, 개수 상한을 확인했다. stdio test로 `multi_edit_file` schema(`maxItems` 100, annotations), `edit_file` 입력 schema 불변, 성공·실패 호출, `WORKSPACE_READ_WRITE` 혼합 설정에서 read-only workspace `READ_ONLY`와 writable workspace 성공을 확인했다. `pnpm e2e:tunnel`이 `tunnel-client` `dev proxy` 경유 legacy·modern 양쪽에서 8개 tool을, multi case에서 `multi_edit_file`의 workspace별 mode를 확인했다
 - 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
 
 ## 7. Future TODO
@@ -183,7 +192,7 @@ SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션
 PRD 16의 Phase 2~11은 그대로 유지한다. shell, Git, process execution은 구현하지 않았다. MVP 구현 중 추가로 나온 항목은 다음과 같다.
 
 - API credit을 충전한 뒤 Responses API 경로의 `tools/call` 확인
-- Phase 2·3에서 보류한 항목: line/range 교체, diff·미리보기, 여러 edit를 한 호출에, regex 검색(선형 시간 엔진 필요), 문자 class·escape가 있는 glob. ChatGPT UI에서 새 tool 3개 직접 확인
+- Phase 2·3에서 보류한 항목: line/range 교체, diff·미리보기, regex 검색(선형 시간 엔진 필요), 문자 class·escape가 있는 glob. ChatGPT UI에서 새 tool 3개와 `multi_edit_file` 직접 확인
 - 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
 - README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)

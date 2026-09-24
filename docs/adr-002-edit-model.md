@@ -52,6 +52,16 @@ match는 decode된 문자열에 대한 정확한 비교다. 줄바꿈 정규화,
 
 한 파일 안의 여러 곳을 원자적으로 바꿀 수 있다. 다만 배열 안의 edit가 서로 겹치거나 앞 edit가 뒤 edit의 원문을 바꾸는 경우의 의미를 정해야 한다. v1은 단일 edit로 두고, 결과 revision으로 연속 호출한다. 호출 사이에 사용자가 파일을 바꾸면 다음 호출이 `REVISION_CONFLICT`로 멈춘다.
 
+#### Amendment (2026-09-24)
+
+이 대안을 채택해 새 tool `multi_edit_file`로 제공한다. `edit_file`은 v0.1.0 입력과 출력 그대로 둔다.
+
+- **의미**: `edits` 배열(1~100개, 항목은 `old_string`, `new_string`, `replace_all`)을 decode된 content에 순서대로 적용한다. 각 `old_string`은 앞 edit까지 적용한 결과에 match하고(Claude Code MultiEdit와 같다), 각 edit는 2절의 단일 edit 규칙을 따른다. 위에서 미룬 "앞 edit가 뒤 edit의 원문을 바꾸는 경우"는 이 순차 적용으로 닫는다. 겹침을 따로 검사하지 않는다.
+- **원자성**: `expected_revision` 검사 한 번, 쓰기 한 번(2절 5번의 `write_file` 교체 경로). 어느 edit든 실패하면 파일은 바뀌지 않고, 오류 message가 `edits[i]`로 실패한 edit를 가리킨다.
+- **별도 tool인 이유**: `edit_file`에 선택 인자 `edits`를 더하면 top-level `old_string`/`new_string`과의 상호 배타를 schema로 표현해야 한다. zod union은 JSON Schema에서 top-level `anyOf`가 되는데, MCP `inputSchema`는 `type: object`여야 하고 hosted client의 schema 처리도 보장되지 않는다. 둘을 모두 optional로 풀면 v0.1.0에서 필수였던 `old_string`이 schema에서 사라지고 배타 검사는 runtime에만 남는다. 새 tool이면 두 schema가 모두 단순하고 model은 이름으로 고른다.
+
+세부 결정은 implementation notes M40~M42에 있다.
+
 ## 5. Deferred
 
 - line/range 교체
@@ -71,4 +81,5 @@ match는 decode된 문자열에 대한 정확한 비교다. 줄바꿈 정규화,
 ### Negative
 
 - 한 파일의 여러 곳을 바꾸려면 호출을 여러 번 해야 하고, 그 사이 상태는 중간 결과다.
+  - Amendment (2026-09-24): `multi_edit_file`로 한 호출에 적용할 수 있다(4절 Amendment).
 - 같은 text가 여러 번 나오는 파일에서는 agent가 주변 문맥을 넣어 `old_string`을 유일하게 만들어야 한다.
