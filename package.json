@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "description": "Workspace-confined filesystem MCP server for OpenAI Secure MCP Tunnel (stdio)",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "private-workspace-mcp": "dist/index.js"
