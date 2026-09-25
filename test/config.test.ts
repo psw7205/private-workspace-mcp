@@ -38,7 +38,18 @@ describe('loadConfig', () => {
       },
       audit: { maxBytes: 10_485_760 },
       denyPatterns: [...DEFAULT_DENY_PATTERNS],
+      git: false,
     });
+  });
+
+  it('turns the Git tools on only for WORKSPACE_GIT=read-only (M52)', async () => {
+    expect((await loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_GIT: 'read-only' })).git).toBe(true);
+    expect((await loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_GIT: '' })).git).toBe(false);
+    for (const value of ['off', 'true', 'read-write', 'READ-ONLY', ' read-only']) {
+      await expect(loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_GIT: value }), value).rejects.toThrow(
+        'WORKSPACE_GIT must be "read-only" or unset',
+      );
+    }
   });
 
   it('appends extra deny patterns to the defaults', async () => {

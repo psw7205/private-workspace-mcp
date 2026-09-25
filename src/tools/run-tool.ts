@@ -24,6 +24,8 @@ export interface ToolOutcome<T> {
   result: T;
   bytesRead?: number;
   bytesWritten?: number;
+  /** Recorded as `truncated: true` in the audit record when set (ADR-004 §2.8). */
+  truncated?: boolean;
 }
 
 /**
@@ -71,6 +73,7 @@ export async function runTool<T extends Record<string, unknown>>(
       duration_ms: elapsed(),
       ...(outcome.bytesRead !== undefined ? { bytes_read: outcome.bytesRead } : {}),
       ...(outcome.bytesWritten !== undefined ? { bytes_written: outcome.bytesWritten } : {}),
+      ...(outcome.truncated ? { truncated: true as const } : {}),
     });
     return {
       content: [{ type: 'text', text: JSON.stringify(outcome.result) }],
@@ -82,6 +85,7 @@ export async function runTool<T extends Record<string, unknown>>(
     const record: AuditRecord = { ...base, ok: false, duration_ms: elapsed(), error_code: failure.code };
     const errno = (error as NodeJS.ErrnoException | undefined)?.code;
     if (!(error instanceof WorkspaceError) && typeof errno === 'string') record.error_detail = errno;
+    if (error instanceof WorkspaceError && error.detail !== undefined) record.error_detail = error.detail;
     options.audit(record);
     return {
       content: [{ type: 'text', text: JSON.stringify({ error: { code: failure.code, message: failure.message } }) }],
@@ -96,6 +100,8 @@ export async function runTool<T extends Record<string, unknown>>(
 export interface SelectedWorkspace {
   guard: PathGuard;
   mode: WorkspaceMode;
+  /** Canonical root; only the Git tools use it, as git's working tree (ADR-004 §2.11). Never returned. */
+  root: string;
 }
 
 export interface ToolDeps {

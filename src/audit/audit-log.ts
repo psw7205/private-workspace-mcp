@@ -18,8 +18,13 @@ export interface AuditRecord {
   duration_ms: number;
   bytes_read?: number;
   bytes_written?: number;
+  /** Set when a Git tool cut its output at the read limit (ADR-004 §2.8). */
+  truncated?: true;
   error_code?: ErrorCode;
-  /** Node.js error code (e.g. `EIO`) behind an INTERNAL_ERROR; never a message. */
+  /**
+   * Node.js error code (e.g. `EIO`) behind an INTERNAL_ERROR, or a Git tool's `exit:<n>`,
+   * `signal:<name>`, or rejected config key (ADR-004 §2.8); never a message.
+   */
   error_detail?: string;
 }
 

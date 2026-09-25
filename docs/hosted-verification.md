@@ -9,6 +9,7 @@
 | `WORKSPACE_READ_WRITE`로 섞인 mode를 model이 description으로 구분하는지 | ADR-008 2.2절 Amendment, M38 |
 | (선택) Responses API 경로의 `tools/call` | notes 6절 "미검증" |
 | (선택) container child를 `tunnel-client` 경유로 실행 | README "OpenAI Secure MCP Tunnel 연결", notes 7절 |
+| (선택) `WORKSPACE_GIT=read-only` Git tool 호출 | ADR-004, notes 7절 (부록 C) |
 
 아래 `<repo-root>`는 이 repo checkout, `<fixture>`는 검증용 임시 directory의 절대 경로다.
 
@@ -139,3 +140,28 @@ curl -s https://api.openai.com/v1/responses \
 ## 부록 B. (선택) container child를 `tunnel-client` 경유로
 
 README의 container `--mcp-command` 예시를 검증용 profile에 넣고 2~4절을 반복한다. `WORKSPACE_ROOTS`면 repo마다 `-v <fixture>/api:/workspaces/api` 식으로 mount하고 `-e WORKSPACE_ROOTS=api=/workspaces/api,web=/workspaces/web -e WORKSPACE_READ_WRITE=web`을 준다. 추가로 `tunnel-client run`을 멈춘 뒤 `docker ps`에 container가 남지 않는지 확인한다.
+
+## 부록 C. (선택) read-only Git tool (ADR-004)
+
+`WORKSPACE_GIT=read-only`로 켠 Git tool 4개를 hosted 경로로 확인한다. `pnpm e2e:tunnel`의 git case는 `tunnel-client dev proxy`까지만 확인했다(notes 6절).
+
+1. `api`를 repository로 만든다. `.env`가 history에 남도록 먼저 commit하고, 그 뒤 worktree를 하나 바꾼다.
+
+   ```sh
+   cd <fixture>/api && git init -q -b main && git add -A && git commit -qm initial
+   printf 'export const marker = "needle2";\n' > src/app.ts
+   ```
+
+2. 2절 `--mcp-command`의 `env -u ...` 뒤에 `WORKSPACE_GIT=read-only`를 더해 profile을 다시 만든다. 띄우기 전에 같은 env로 `node <repo-root>/dist/index.js --check`를 실행해 마지막 줄이 `git: read-only (git <version> at <path>)`인지 본다.
+3. tool 목록이 12개로 바뀌므로 connector를 Refresh하고 새 대화를 시작한다.
+4. ChatGPT에 요청하고 결과를 확인한다.
+
+   | # | 요청 | 기대 |
+   |---|------|------|
+   | 1 | "api workspace의 git status 보여줘" | `git_status`(`workspace: "api"`), `src/app.ts`가 worktree `M`. `.env`, `.gitignore` 대상은 없음 |
+   | 2 | "api의 변경 diff 보여줘" | `git_diff`, patch에 `needle2` |
+   | 3 | "api의 최근 commit과 그 commit 내용을 보여줘" | `git_log` 뒤 `git_show`, 파일 목록에 `.env` 없음, `API_TOKEN` 문자열 없음 |
+   | 4 | "web workspace의 git log 보여줘" | `NOT_A_REPOSITORY` (web은 repository가 아님) |
+   | 5 | "api에서 `HEAD:.env`를 git_show로 보여줘" | model이 거절하거나 `INVALID_REVISION` |
+
+5. 4절처럼 audit을 확인한다. Git 호출 record에 `bytes_read`가 있고 파일 내용, rev 문자열, git stderr가 없어야 한다.

@@ -42,6 +42,8 @@ export interface Config {
   audit: AuditConfig;
   /** Defaults followed by operator additions. */
   denyPatterns: string[];
+  /** Set by `WORKSPACE_GIT=read-only`: register the read-only Git tools (ADR-004 §2.9). */
+  git: boolean;
 }
 
 // setTimeout clamps larger delays to 1 ms, which would time out every tool call.
@@ -85,7 +87,11 @@ export async function loadConfig(env: Record<string, string | undefined>): Promi
 
   const denyPatterns = [...DEFAULT_DENY_PATTERNS, ...parseExtraDenyPatterns(env.WORKSPACE_EXTRA_DENY_PATTERNS)];
 
-  return { workspaces, multi, limits, audit, denyPatterns };
+  // Only the one value turns Git on; any other non-empty value is a typo, not "off" (M52).
+  const gitSetting = env.WORKSPACE_GIT ?? '';
+  if (gitSetting !== '' && gitSetting !== 'read-only') throw new Error('WORKSPACE_GIT must be "read-only" or unset');
+
+  return { workspaces, multi, limits, audit, denyPatterns, git: gitSetting === 'read-only' };
 }
 
 type WorkspaceRoot = Omit<Workspace, 'mode'>;

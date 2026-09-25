@@ -158,6 +158,31 @@ export class PathGuard {
     return { relativePath, absolutePath, existingAncestor, missingDirectories, exists };
   }
 
+  /**
+   * Validates a path that need not exist, such as a file in Git history (ADR-004 §2.5, M66): the
+   * input and the canonical form of its deepest existing prefix must be inside and not denied.
+   * Catches symlinks and Windows 8.3 aliases (`GIT~1` for `.git`) that the input check misses.
+   * Returns the normalized relative path.
+   */
+  async checkMaybeMissing(input: string): Promise<string> {
+    const relativePath = this.checkRelative(input);
+    const segments = relativePath === '.' ? [] : relativePath.split('/');
+    for (let count = segments.length; count >= 0; count--) {
+      let ancestor: string;
+      try {
+        ancestor = await realpath(this.toAbsolute(segments.slice(0, count).join('/') || '.'));
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+        throw fromFsError(error, relativePath);
+      }
+      this.assertAllowed(path.join(ancestor, ...segments.slice(count)), relativePath);
+      return relativePath;
+    }
+    // Unreachable: the root itself resolves.
+    throw new WorkspaceError('PATH_OUTSIDE_WORKSPACE', `${relativePath} resolves outside the workspace`);
+  }
+
   /** Throws unless the canonical `absolutePath` is inside the workspace and not denied. */
   assertAllowed(absolutePath: string, relativePath: string): void {
     if (this.isDenied(this.assertInside(absolutePath, relativePath))) {

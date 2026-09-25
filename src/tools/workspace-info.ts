@@ -15,6 +15,8 @@ const sharedOutput = {
     request_timeout_ms: z.number(),
     max_search_files: z.number(),
   }),
+  /** Whether the read-only Git tools are registered (ADR-004 §2.9). */
+  git: z.boolean(),
 };
 
 const singleOutputSchema = z.object({ name: z.string(), root: z.literal('.'), mode: modeSchema, ...sharedOutput });
@@ -24,9 +26,11 @@ const multiOutputSchema = z.object({ workspaces: z.array(z.object({ name: z.stri
 export function registerWorkspaceInfo(server: McpServer, { config, audit }: ToolDeps): void {
   const description = config.multi
     ? 'Describe the workspaces this server exposes: their names, each one\'s access mode (read-only or read-write), platform, and limits. ' +
-      'Pass a name as `workspace` to the other tools; their paths are relative to that workspace root ".". Host paths are never revealed.'
+      'Pass a name as `workspace` to the other tools; their paths are relative to that workspace root ".". Host paths are never revealed. ' +
+      '`git` tells whether the read-only Git tools are available.'
     : 'Describe the workspace this server exposes: its name, access mode (read-only or read-write), platform, and limits. ' +
-      'All tool paths are relative to the workspace root ".". The host path is never revealed.';
+      'All tool paths are relative to the workspace root ".". The host path is never revealed. ' +
+      '`git` tells whether the read-only Git tools are available.';
   const shared = {
     platform: process.platform,
     limits: {
@@ -37,6 +41,7 @@ export function registerWorkspaceInfo(server: McpServer, { config, audit }: Tool
       request_timeout_ms: config.limits.requestTimeoutMs,
       max_search_files: config.limits.maxSearchFiles,
     },
+    git: config.git,
   };
   const single = config.workspaces[0];
   const result = config.multi

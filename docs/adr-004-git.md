@@ -76,6 +76,8 @@ git 2.54.0(Apple Git-157)에서 확인한 것: repo config의 `filter.<drv>.clea
 
 alias는 builtin subcommand 이름을 덮어쓸 수 없으므로 고정 subcommand만 쓰는 한 영향이 없다.
 
+> **Amendment (2026-09-24):** 위의 "unborn repo에서도 `--attr-source=HEAD`는 실패하지 않는다"는 `status`에는 맞지 않는다. git 2.54.0에서 첫 commit 전 repo의 `status`는 `fatal: bad --attr-source or GIT_ATTR_SOURCE`(exit 128)로 끝난다(`rev-parse`·`config`는 통과). 그래서 2.4·2.4.1절 검사 뒤 호출마다 `rev-parse --verify HEAD^{tree}`로 HEAD tree OID를 구해 그 호출의 나머지 명령에 `--attr-source=<oid>`로 고정하고, HEAD가 없으면 object format에 맞는 빈 tree OID를 준다. 빈 tree는 attributes가 없으므로 worktree `.gitattributes`를 읽지 않는다는 목적은 그대로다. 한 호출 안에서 HEAD가 바뀌어도 attributes source가 흔들리지 않는 효과도 있다. 세부는 implementation notes M53.
+
 ### 2.4 Repository 경계
 
 workspace root가 repository toplevel이고 `<root>/.git`이 실제 directory일 때만 허용한다. 호출마다 다음을 확인하고, 하나라도 어긋나면 `NOT_A_REPOSITORY`다.
@@ -98,6 +100,8 @@ workspace가 repo의 하위 directory인 구성은 지원하지 않는다. histo
 
 이 검사를 통과한 config에서 모은 filter driver 이름이 2.3절 override 목록이 된다. config 읽기와 본 명령 사이에 include 대상이 바뀌어도 include key가 root 밖을 가리키는 경우만 통과하므로 model이 그 대상을 쓸 수 없다.
 
+> **Amendment (2026-09-24):** 구현에서 세 가지를 확인·보완했다(implementation notes M55, M56, M61). (1) `~`로 시작하는 include는 이 검사에서 `UNSAFE_GIT_CONFIG`지만, child env에 `HOME`이 없어 git이 2.4절 3번 `rev-parse`에서 이미 실패하므로 tool 결과는 `NOT_A_REPOSITORY`다. 어느 쪽이든 다른 git 명령은 실행되지 않는다. 이는 POSIX의 경우이고, Git for Windows는 `HOME` 없이도 `~`를 풀어 `rev-parse`가 통과하므로 Windows에서는 이 검사가 `UNSAFE_GIT_CONFIG`로 거부한다(`windows-latest` CI run 35969533607). (2) "root 안이면서 `<root>/.git` 밖" 판정은 canonical 경로만이 아니라 lexical 경로에도 적용한다. workspace 안의 symlink가 root 밖을 가리키면 canonical로는 밖이지만 model이 link를 다시 가리킬 수 있으므로 거부한다. (3) audit `error_detail`에는 key 전체가 아니라 section·변수 이름만 남기고 subsection은 `*`로 바꾼다(`includeif.*.path`, `hook.*.command`). subsection에는 host 경로나 URL credential이 들어갈 수 있다(불변식 6).
+
 ### 2.5 입력 검증
 
 * `path`: `normalizeRelativePath`와 `isDenied`(입력 경로 기준)를 통과해야 한다. 존재 여부는 보지 않는다(지운 파일의 history도 조회 대상). git에는 `--` 뒤에 `:(literal)<path>`로 넘겨 glob과 다른 magic이 해석되지 않게 한다. 전역 `--literal-pathspecs`는 2.6절의 exclude magic까지 끄므로(`git help git`) 쓰지 않는다.
@@ -111,6 +115,8 @@ deny 목록(`DEFAULT_DENY_PATTERNS` + `WORKSPACE_EXTRA_DENY_PATTERNS`)은 두 �
 2. **in-process 필터**: rev 사이 diff와 `show`는 먼저 `diff-tree --name-status -z`로, worktree↔index와 staged diff는 `status --porcelain=v2 -z` entry로 파일 목록을 받아 `isDenied`로 검사한다(rename detection은 끄지만 rename 표기가 오면 두 경로 모두). `diff-files --name-status`는 stat만 바뀐 파일을 변경으로 내므로 목록으로 쓰지 않는다. 걸린 파일이 있으면 두 번째 `-p` 실행에 `:(exclude,literal)<path>`로 추가한다. 두 실행 사이에 worktree가 바뀌어도 static exclude는 그대로 적용된다. `status`는 porcelain v2 entry의 `path`와 `orig_path`를 검사한다. patch text의 `diff --git` header를 파싱하지 않는다.
 
 `git_log`에는 static exclude를 쓰지 않는다. log의 pathspec은 출력 필터가 아니라 commit 선택(history simplification)을 바꾼다. log는 파일 목록을 주지 않으므로 필터할 경로가 없다. commit message와 author는 그대로 나간다.
+
+> **Amendment (2026-09-24):** `?`·`[`의 escape는 `\`가 아니라 한 글자 class(`[?]`, `[[]`)로 한다. Git for Windows는 pathspec의 `\`를 directory 구분자로 읽어, `windows-latest` CI(run 35969533607)에서 `x\[1]`이 `x/[1]`처럼 해석되어 추가 deny pattern `x[1]`의 파일이 static exclude만으로는 걸리지 않았다(in-process 필터는 막았다). class escape는 모든 OS에서 같은 의미다. `\`는 추가 deny pattern 검증에서 이미 거부되므로 escape할 일이 없다(implementation notes M65).
 
 두 겹 모두 경로 이름 기준이다. `config.json`에 복사된 secret처럼 이름이 deny에 걸리지 않는 내용은 `read_file`과 마찬가지로 막지 못한다.
 
@@ -146,7 +152,14 @@ Git for Windows를 전제로 한다. 경로 출력은 git이 `/`로 주므로 �
 
 * `os.devNull`(`\\.\nul`)을 `GIT_CONFIG_GLOBAL`, `core.hooksPath`, `core.attributesFile` 값으로 받는지.
 * process group kill 대신 무엇으로 손자 process를 끝낼지(Job Object 등).
+> **Amendment (2026-09-24):** 첫 항목은 해소했다. `windows-latest` CI(run 35969096201)에서 Git for Windows는 `os.devNull`(`\\.\nul`)을 `-c core.hooksPath=` 값과 startup 검사에서 `fatal: unable to access '\\.\nul': Invalid argument`로 거부했다. Git for Windows `compat/mingw.c`는 `mingw_open`·`mingw_fopen`·`mingw_freopen`에서 문자열 `/dev/null`만 `nul`로 바꾸고 `mingw_access`도 `/dev/null`·`nul`을 성공으로 처리한다. 그래서 `GIT_CONFIG_GLOBAL`, `core.hooksPath`, `core.attributesFile`에는 모든 OS에서 `/dev/null`을 준다. 의미는 같다: 빈 global config, hook이 없는 hooks directory(`/dev/null/<hook>`는 존재하지 않음), 빈 attributes 파일. 나머지 두 항목은 unresolved로 남는다(implementation notes M52, M60).
+
 * `.git` alias와 deny의 관계. `.git.`, `.git::$DATA` 같은 이름은 M12 문법 검사가 모든 OS에서 거부하지만, 8.3 short name(`GIT~1`)은 문법상 통과한다. `write_file`로 `GIT~1/hooks/...`나 `GIT~1/config`에 쓰는 것이 canonical 경로 deny(realpath가 long name을 돌려주는지)에 걸리는지 확인하지 못했다. `.git` 쓰기는 사실상 코드 실행이므로 CI test plan에 넣는다. 이 항목은 Git tool과 무관하게 현재 filesystem tool에도 해당한다.
+
+> **Amendment (2026-09-24, 2):** 남은 두 항목도 `windows-latest` CI 근거로 해소했다(implementation notes M66, M67).
+>
+> * **손자 process**: CI의 PATH에서 찾은 git은 launcher `C:\Program Files\Git\bin\git.exe`였고, CIM process 목록에서 이 launcher가 `mingw64\bin\git.exe`를 child로 띄우는 것을 확인했다(run 35970621089 진단). 그래서 Windows에서는 startup에 `git --exec-path`(`<prefix>/libexec/git-core`)에서 `<prefix>\bin\git.exe`를 구해 realpath로 고정하고, 서버는 launcher 없이 그 실제 binary를 실행한다. builtin은 process 안에서 돌고 2.3절 hardening으로 program 실행 경로를 모두 끄므로 git child는 손자를 만들지 않는다. CI test가 `cat-file --batch`로 멈춰 있는 실제 binary가 process 목록에 하나뿐이고, `child.kill('SIGKILL')` 뒤 marker를 가진 `git.exe`가 하나도 남지 않음을 확인한다. 같은 test의 대조군은 launcher가 child `git.exe`를 가진다는 것을 확인한다(run 35971050627). Git for Windows 배치를 따르지 않는 설치(`<prefix>\bin\git.exe`가 없음)는 startup에서 거부한다. `taskkill /T`나 Job Object는 쓰지 않는다.
+> * **`GIT~1` alias**: runner volume은 8.3 이름 생성이 켜져 있었고(`fsutil 8dot3name query`: ENABLED) `dir /x`에서 `.git`의 short name `GIT~1`, `.env`의 `ENV~1`을 확인했다. Node의 native realpath는 `GIT~1`을 `.git`으로 풀고(JS realpath는 풀지 않음) `PathGuard`는 native realpath를 쓰므로, `resolveExisting`·`resolveForWrite`(`GIT~1/config`, `GIT~1/hooks/pre-commit`, 없는 하위 경로 포함)가 canonical deny로 `PATH_BLOCKED`다. Git tool의 `path`는 원래 입력 기준 deny만 적용했는데(2.5절), 존재하는 가장 깊은 상위를 canonical로 풀어 deny와 containment를 적용하는 `PathGuard.checkMaybeMissing`을 더해 `GIT~1/config`, `.git`을 가리키는 symlink 등도 `PATH_BLOCKED`가 된다. CI test는 8.3 이름이 실제로 있는지 먼저 확인하고, 없으면 실패해서 이 근거가 조용히 사라지지 않게 한다.
 
 ### 2.11 보안 불변식과의 관계
 
@@ -175,6 +188,8 @@ Accept 시 AGENTS.md를 다음처럼 고친다(이 ADR에서는 고치지 않는
   * timeout과 출력 상한에서 filter 대신 넣은 느린 program을 포함한 process group 전체가 종료됨(POSIX).
 * `windows-latest` CI 통과와 2.10절 unresolved 해소.
 * PRD 13 error 표와 implementation notes에 M 항목 추가.
+
+> **Amendment (2026-09-24):** 첫 구현(M52~M63)에서는 test를 구현 뒤에 작성했다. 그래서 이 변경에 한해 red-first 조건을 mutation 검증으로 대신한다. 2.3~2.6절 safeguard 17개를 하나씩 제거해 14개가 test를 실패시켰고, 실패시키지 않은 3개(`--no-textconv`, `--no-ext-diff`, `.git` `lstat` directory 검사)는 각각 plumbing 명령이 원래 textconv·external diff를 실행하지 않는다는 점과 2.4절 3번 `rev-parse` 비교가 gitfile·symlink `.git`을 따로 거부한다는 점 때문에 다른 한 겹이 이미 막는 중복 방어다. 보안 review 뒤의 수정(2.3절·2.4.1절 Amendment)은 red test를 먼저 작성해 실패를 확인한 뒤 구현했다. `windows-latest` CI 통과와 2.10절 unresolved 해소 조건은 그대로다.
 
 ## 3. 이유
 

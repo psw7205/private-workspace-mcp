@@ -177,6 +177,34 @@ async function exerciseMulti(mcpUrl: string): Promise<void> {
   await client.close();
 }
 
+/** WORKSPACE_GIT=read-only (ADR-004) on a real repository: the four Git tools through the tunnel. */
+async function exerciseGit(mcpUrl: string): Promise<void> {
+  const client = new Client({ name: 'pwmcp-e2e', version: '0.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+  await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
+
+  const { tools } = await client.listTools();
+  for (const name of ['git_diff', 'git_log', 'git_show', 'git_status']) {
+    const tool = tools.find((candidate) => candidate.name === name);
+    assert.equal(tool?.annotations?.readOnlyHint, true, name);
+  }
+  assert.equal(text(await client.callTool({ name: 'get_workspace_info', arguments: {} })).git, true);
+
+  const status = text(await client.callTool({ name: 'git_status', arguments: {} }));
+  assert.equal(status.branch, 'main');
+  assert.deepEqual(status.entries, [{ path: 'README.md', index: '.', worktree: 'M' }], 'modified .env must be hidden');
+  const history = text(await client.callTool({ name: 'git_log', arguments: {} }));
+  assert.deepEqual(history.commits.map((commit: { message: string }) => commit.message), ['second', 'initial']);
+  const show = text(await client.callTool({ name: 'git_show', arguments: { rev: 'HEAD~1' } }));
+  assert.deepEqual(show.files.map((file: { path: string }) => file.path), ['README.md']);
+  assert.ok(!JSON.stringify(show).includes('SECRET'), 'committed .env must be hidden');
+  const diff = text(await client.callTool({ name: 'git_diff', arguments: {} }));
+  assert.match(diff.patch, /\+# e2e v3/);
+  const stash = await client.callTool({ name: 'git_show', arguments: { rev: 'stash^3' } });
+  assert.equal(text(stash).error.code, 'INVALID_REVISION');
+  log(`git: status, log, show, diff ok; .env hidden in status and history; stash^3 -> INVALID_REVISION`);
+  await client.close();
+}
+
 async function stopAndCheckChild(proxy: ChildProcess, childPid: number, signal: NodeJS.Signals): Promise<void> {
   assert.ok(isAlive(childPid));
   proxy.kill(signal);
@@ -220,6 +248,31 @@ async function main(): Promise<void> {
     assert.match(multi.stderr(), /"workspace":"web"/, 'audit records name the workspace');
     assert.match(multi.stderr(), /"workspace":"api"[^\n]*"error_code":"READ_ONLY"/, 'audit records the read-only rejection');
     await stopAndCheckChild(multi.proxy, multi.childPid, 'SIGTERM');
+
+    const repo = path.join(scratch, 'repo');
+    await mkdir(repo);
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-c', 'user.name=e2e', '-c', 'user.email=e2e@example.com', '-c', 'commit.gpgsign=false', ...args], {
+        cwd: repo,
+        env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+        stdio: 'ignore',
+      });
+    git('init', '-q', '-b', 'main');
+    await writeFile(path.join(repo, 'README.md'), '# e2e\n');
+    await writeFile(path.join(repo, '.env'), 'SECRET=1\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'initial');
+    await writeFile(path.join(repo, 'README.md'), '# e2e v2\n');
+    git('commit', '-q', '-am', 'second');
+    await writeFile(path.join(repo, 'README.md'), '# e2e v3\n');
+    await writeFile(path.join(repo, '.env'), 'SECRET=2\n');
+    // A runtime key in the tunnel-client environment must not matter to the Git tools (ADR-004 §2.3).
+    const gitProxy = await startProxy({ WORKSPACE_ROOT: repo, WORKSPACE_GIT: 'read-only', CONTROL_PLANE_API_KEY: 'e2e-not-a-key' }, scratch, 'git');
+    proxies.push(gitProxy.proxy);
+    await exerciseGit(gitProxy.mcpUrl);
+    assert.match(gitProxy.stderr(), /"tool":"git_log"[^\n]*"ok":true/, 'git calls are audited');
+    assert.ok(!gitProxy.stderr().includes('SECRET'), 'git output must not be logged');
+    await stopAndCheckChild(gitProxy.proxy, gitProxy.childPid, 'SIGTERM');
 
     assert.deepEqual(execFileSync('ls', [outside], { encoding: 'utf8' }).trim().split('\n'), ['private.txt']);
     log('PASS');

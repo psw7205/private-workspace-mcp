@@ -12,7 +12,7 @@ OpenAI Secure MCP Tunnel ◀── outbound HTTPS ── tunnel-client
                                          private-workspace-mcp ──▶ WORKSPACE_ROOT
 ```
 
-이 서버는 coding agent가 아니라 capability provider다. shell, Git, process 실행은 제공하지 않는다(PRD 4, ADR-001 §15).
+이 서버는 coding agent가 아니라 capability provider다. shell과 임의 process 실행은 제공하지 않는다(PRD 4, ADR-001 §15). Git은 운영자가 `WORKSPACE_GIT=read-only`로 켰을 때만 read-only typed tool 4개로 제공한다(ADR-004).
 
 - 요구사항과 설계: [`docs/prd.md`](docs/prd.md), [`docs/adr.md`](docs/adr.md)
 - 문서에 없던 결정, 잔여 위험, 검증 결과, TODO: [`docs/implementation-notes.md`](docs/implementation-notes.md)
@@ -47,7 +47,18 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `edit_file` | 기존 파일의 exact-match 문자열 교체(ADR-002). `old_string`은 한 번만 나와야 하고 여러 번이면 `replace_all`. `expected_revision` 필수, 새 `revision` 반환. `dry_run: true`면 모든 검사만 하고 쓰지 않은 채 적용 시의 `revision`과 unified `diff`(context 3줄, 64 KiB에서 자르고 `diff_truncated`)를 반환 |
 | `multi_edit_file` | 한 파일에 `edits` 배열(최대 100개, 각 항목은 `edit_file`과 같은 `old_string`/`new_string`/`replace_all`)을 순서대로 적용하고 한 번에 쓴다. 뒤 edit는 앞 edit의 결과에 match한다. 하나라도 실패하면 파일은 바뀌지 않고 오류 message가 `edits[i]`로 실패한 edit를 가리킴. 전체·edit별 교체 횟수와 새 `revision` 반환. `dry_run`은 `edit_file`과 같음 |
 
-모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. `WORKSPACE_ROOTS`로 띄우면 `get_workspace_info`를 뺀 7개 tool이 필수 인자 `workspace`(설정한 이름의 enum)를 받고, path는 그 workspace root 기준이다(ADR-008). 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
+`WORKSPACE_GIT=read-only`면 다음 4개가 추가된다(ADR-004). 모두 `readOnlyHint: true`이고 `WORKSPACE_MODE`와 무관하게 동작한다. workspace root가 repository toplevel이고 `<root>/.git`이 실제 directory일 때만 동작하며, 하위 directory·gitfile(linked worktree, submodule)·symlink `.git`은 `NOT_A_REPOSITORY`다. rev는 `HEAD`, commit id(hex 4~64자), branch·tag·remote-tracking branch 이름에 `~N`·`^N`만 붙일 수 있다. range, reflog(`@{…}`), `rev:path`, `stash`, notes는 `INVALID_REVISION`이다.
+
+| tool | 설명 |
+|------|------|
+| `git_status` | 현재 branch(detached면 `null`), HEAD `oid`, `upstream`과 다른지 여부(`upstream_differs`, 개수는 세지 않음), 변경 entry(`path`, `orig_path`, porcelain v2 `index`/`worktree` 상태 글자, untracked는 파일 단위 `?`) |
+| `git_diff` | 변경 파일 목록과 unified patch. 기본은 worktree↔index, `staged: true`면 index↔`HEAD`, `base`(와 `head`, 기본 `HEAD`)면 두 commit 사이. `path`로 파일·directory를 제한(지운 파일도 가능). untracked 파일은 없음 |
+| `git_log` | `rev`(기본 `HEAD`)부터 commit 목록(`oid`, `parents`, author·committer 이름·email·시각, message). `path`로 그 경로를 바꾼 commit만, `max_count` 기본 20·최대 200. 변경 파일 목록은 없음 |
+| `git_show` | commit 1개의 metadata와 first parent 대비 파일 목록·patch(root commit은 빈 tree 대비) |
+
+deny 대상 파일은 status·diff·show 결과에서 존재 여부도 드러내지 않고 빠진다(과거 commit의 `.env` 포함). git 명령 하나의 출력이 `WORKSPACE_MAX_READ_BYTES`를 넘으면 잘리고 `truncated: true`가 된다. patch는 마지막 완전한 파일 section까지 남는다. rename detection은 하지 않고 binary 파일은 `Binary files … differ` 한 줄이다.
+
+모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. `WORKSPACE_ROOTS`로 띄우면 `get_workspace_info`를 뺀 7개 tool이 필수 인자 `workspace`(설정한 이름의 enum)를 받고, path는 그 workspace root 기준이다(ADR-008). Git tool 4개도 같다. repository가 아닌 workspace는 `NOT_A_REPOSITORY`를 받는다. 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
 
 | code | 의미 |
 |------|------|
@@ -59,6 +70,10 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `READ_ONLY` | read-only workspace에 write 시도(`write_file`·`edit_file`·`multi_edit_file`, `dry_run` 포함) |
 | `REVISION_CONFLICT` | 읽은 뒤 파일이 바뀜, 이미 존재하는 파일을 revision 없이 생성 시도 |
 | `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS` | `edit_file`·`multi_edit_file`의 `old_string`이 없음, 여러 번 나오는데 `replace_all`이 아님 |
+| `NOT_A_REPOSITORY` | Git tool: workspace root가 `.git` directory를 가진 repository toplevel이 아님 |
+| `UNSAFE_GIT_CONFIG` | Git tool: repo config가 workspace 안(`.git` 밖) 파일을 include하거나 path 값으로 가리킴, `hook.*` key가 있음. 어떤 key인지는 audit log에만 |
+| `INVALID_REVISION` | Git tool: 받지 않는 rev 형식·namespace, 없는 commit, `head`만 주거나 `staged`와 `base`를 함께 줌 |
+| `GIT_FAILED` | Git tool: git이 비정상 종료. git stderr는 보내지 않고 audit에 exit code만 남김 |
 | `PERMISSION_DENIED` / `TIMEOUT` / `INTERNAL_ERROR` | OS 권한, 시간 초과, 기타 (상세는 audit log에만) |
 
 ## 보안 모델
@@ -69,11 +84,13 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 - **안전한 write**: 기본 read-only. `WORKSPACE_ROOTS`면 `WORKSPACE_READ_WRITE`에 나열한 workspace만 쓸 수 있다(`WORKSPACE_READ_WRITE` 없이 `WORKSPACE_MODE=read-write`면 모든 workspace). 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
 - **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, edit dry run이면 `dry_run: true`, 성공 여부, 소요 시간, bytes, error code). 파일 내용과 secret은 기록하지 않는다.
 
+- **Git (opt-in)**: system `git`을 shell 없이 startup에 고정한 절대 경로로 실행한다(workspace 안의 `git`은 쓰지 않음). child env는 상속하지 않고 새로 만들어 `CONTROL_PLANE_API_KEY`, `GIT_*`, `SSH_*`, `HOME`이 가지 않는다. system·global config, pager, hooks, fsmonitor, filter, textconv, external diff, 서명 검증, network(lazy fetch 포함), replace ref를 인자·env로 끄고, worktree `.gitattributes` 대신 HEAD의 것만 읽는다. index를 다시 쓰는 명령은 쓰지 않는다. 호출마다 repository 경계와 repo config를 확인하고, model이 쓸 수 있는 파일을 config로 끌어오면 `UNSAFE_GIT_CONFIG`로 거부한다. rev는 hex OID로 바꾼 뒤에만 넘겨 option injection이 구조적으로 막힌다. deny 목록은 pathspec exclude와 파일 목록 검사 두 겹으로 적용한다. timeout·출력 상한·서버 종료 때 git process group 전체를 끝낸다(POSIX). history는 현재 이름 기준 deny로 막지 못하는 내용(rename된 secret, 과거 파일, commit message)을 드러내므로 기본은 꺼짐이다. 잔여 위험은 implementation notes 3절에 있다.
+
 path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자나 container 같은 OS 권한이다(ADR-001 §11). 잔여 위험은 implementation notes 3절에 있다.
 
 read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(prompt injection)가 `write_file`·`edit_file` 호출로 이어질 수 있다(`multi_edit_file`도 같다). revision 검사는 lost update를 막을 뿐 이 경로를 막지 않는다(model도 `read_file`로 revision을 얻는다). 서버는 쓰기 tool 모두에 `readOnlyHint: false`, `destructiveHint: true`를 선언한다. annotations는 tool 단위라 `dry_run` 호출에도 같다. client 쪽 approval은 서버 권한 판단의 근거가 아닌 보조 방어로 쓴다(ADR-001 §14).
 
-- Responses API: `require_approval: {"never": {"tool_names": ["get_workspace_info", "list_directory", "read_file", "find_files", "search_text"]}}`로 읽기 tool만 자동 실행하고 나머지는 승인을 받는다. 쓰기가 필요 없으면 `allowed_tools`로 읽기 tool만 노출하거나 서버를 read-only로 띄운다.
+- Responses API: `require_approval: {"never": {"tool_names": ["get_workspace_info", "list_directory", "read_file", "find_files", "search_text"]}}`로 읽기 tool만 자동 실행하고 나머지는 승인을 받는다. `WORKSPACE_GIT=read-only`면 `git_status`, `git_diff`, `git_log`, `git_show`도 읽기 tool이지만 history는 deny 이름으로 막지 못하는 과거 내용을 드러내므로, 자동 실행 목록에 넣을지는 따로 판단한다. 쓰기가 필요 없으면 `allowed_tools`로 읽기 tool만 노출하거나 서버를 read-only로 띄운다.
 - ChatGPT: write tool 호출 확인을 끄지 않는다.
 
 ## 설정 (env)
@@ -94,6 +111,9 @@ read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(pro
 | `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. 모든 workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
 | `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
 | `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
+| `WORKSPACE_GIT` | (없음 → 꺼짐) | `read-only`면 Git tool 4개를 등록한다. 다른 값은 거부. 켜져 있는데 workspace 밖 `PATH`에서 git을 찾지 못하거나 git이 `--attr-source` 등 필요한 인자를 지원하지 않으면 startup 실패. `--check`가 찾은 git의 version과 경로를 보여준다 |
+
+Git을 켤 때는 workspace root를 repository toplevel(main checkout)로 둔다. Windows는 Git for Windows를 전제로 하고, PATH의 launcher(`bin\git.exe`, `cmd\git.exe`) 대신 `git --exec-path`로 찾은 실제 `<prefix>\bin\git.exe`를 실행한다(종료 시 손자 process가 남지 않게). 그 배치가 아니면 startup에서 거부한다. system config를 읽지 않으므로 Git for Windows가 system에 두는 `core.autocrlf=true`가 빠져 `git_status`가 운영자의 git과 다르게 보일 수 있다. 필요하면 repo config에 둔다. LFS처럼 filter가 필요한 파일은 filter를 끄므로 stat만 바뀌어도 modified로 보일 수 있다. repo config가 worktree 안 파일을 include하거나 `hook.*`을 쓰면 Git tool은 동작하지 않는다.
 
 정수 설정은 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다. 값이 잘못되면 stderr에 이유를 출력하고 exit code 1로 종료한다(fail closed). stdout은 MCP protocol 전용이다. startup 메시지는 stderr로, audit log는 `WORKSPACE_AUDIT_LOG`가 있으면 그 파일로, 없으면 stderr로 나간다.
 
@@ -173,7 +193,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 1. Settings > Security and login에서 Developer mode를 켠다.
 2. https://chatgpt.com/plugins 에서 새 connector를 추가하고 Connection으로 Tunnel을 골라 tunnel을 선택한다(또는 `tunnel_id` 입력).
 3. 인증은 **인증 없음(No authentication)**을 고른다. 이 서버는 OAuth를 구현하지 않으므로 OAuth를 고르면 "does not implement OAuth" 오류가 난다. 접근 통제는 OpenAI의 tunnel 권한이 맡는다(ADR 17 Amendment).
-4. tool 8개가 발견되는지 확인한다.
+4. tool 8개(`WORKSPACE_GIT=read-only`면 12개)가 발견되는지 확인한다.
 
 connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다. 새 버전에서 tool 목록, description, schema가 바뀌었으면 다음 순서로 반영한다. 내부 동작만 바뀌었으면 1까지만 한다.
 
@@ -202,7 +222,7 @@ pnpm bundle        # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS
 pnpm e2e:tunnel    # tunnel-client dev proxy 경유 e2e (tunnel-client 필요, OpenAI credential 불필요)
 ```
 
-`pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, `WORKSPACE_ROOTS`·`WORKSPACE_READ_WRITE` multi case, tunnel-client 종료 시 child 정리를 확인한다.
+`pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, `WORKSPACE_ROOTS`·`WORKSPACE_READ_WRITE` multi case, `WORKSPACE_GIT=read-only` repo의 Git tool 호출, tunnel-client 종료 시 child 정리를 확인한다.
 
 ChatGPT UI(hosted) 경로로 미출시 기능을 확인하는 수동 절차는 [`docs/hosted-verification.md`](docs/hosted-verification.md)에 있다.
 
@@ -227,6 +247,7 @@ src/
   tools/                   tool 정의(schema, annotation)와 공통 runTool(timeout, error 변환, audit)
   filesystem/              PathGuard, reader, lister, writer, editor, 검색(walker, glob, ignore 파일), revision
   policy/deny-list.ts      민감 파일 deny pattern
+  git/                     Git read-only runner(hardened env·인자, process group), repository·config·rev 검사, status/diff/log/show (ADR-004)
   config/config.ts         env 파싱과 검증
   audit/audit-log.ts       stderr/file audit sink
   errors/errors.ts         error code와 fs error 변환

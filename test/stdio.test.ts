@@ -8,7 +8,7 @@ import { Client, type ClientOptions } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createFixture, expectNoHostPath, type Fixture } from './helpers.js';
+import { createFixture, expectNoHostPath, initRepository, type Fixture } from './helpers.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // TEST_SERVER_ENTRY runs this suite against a built artifact (e.g. release/index.mjs) instead of the source.
@@ -216,7 +216,8 @@ describe('stdio server', () => {
         platform: process.platform,
         limits: { max_read_bytes: 1_048_576, max_depth: 2 },
       });
-      expect(Object.keys(info)).toEqual(['name', 'root', 'mode', 'platform', 'limits']);
+      expect(Object.keys(info)).toEqual(['name', 'root', 'mode', 'platform', 'limits', 'git']);
+      expect(info.git).toBe(false);
       expectNoHostPath(JSON.stringify(result), fixture);
     });
 
@@ -570,6 +571,111 @@ describe('stdio server', () => {
         ok: false,
         error_code: 'READ_ONLY',
       });
+    });
+  });
+
+  describe('read-only Git tools (WORKSPACE_GIT=read-only, ADR-004)', () => {
+    let repo: Fixture;
+    let plain: Fixture;
+    const gitTools = ['git_diff', 'git_log', 'git_show', 'git_status'];
+
+    beforeAll(async () => {
+      repo = await createFixture();
+      plain = await createFixture();
+      await initRepository(repo);
+    });
+
+    afterAll(async () => {
+      await repo.cleanup();
+      await plain.cleanup();
+    });
+
+    const expectNoHostPaths = (result: unknown) => {
+      for (const target of [repo, plain]) expectNoHostPath(JSON.stringify(result), target);
+    };
+
+    it('registers the four tools with read-only hints and reports git in get_workspace_info', async () => {
+      const session = await connect({ WORKSPACE_ROOT: repo.root, WORKSPACE_GIT: 'read-only' }, { mode: { pin: '2026-07-28' } });
+      try {
+        const { tools } = await session.client.listTools();
+        expect(tools).toHaveLength(12);
+        for (const name of gitTools) {
+          const tool = tools.find((candidate) => candidate.name === name);
+          expect(tool?.annotations, name).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+          expect(tool?.inputSchema.properties ?? {}, name).not.toHaveProperty('workspace');
+        }
+        const info = parseText(await session.client.callTool({ name: 'get_workspace_info', arguments: {} }));
+        expect(info.git).toBe(true);
+
+        const status = parseText(await session.client.callTool({ name: 'git_status', arguments: {} }));
+        expect(status).toMatchObject({ branch: 'main', upstream: null, entries: [], truncated: false });
+        const log = parseText(await session.client.callTool({ name: 'git_log', arguments: {} }));
+        expect(log.commits.map((commit: { message: string }) => commit.message)).toEqual(['initial']);
+        const show = await session.client.callTool({ name: 'git_show', arguments: { rev: 'HEAD' } });
+        const shown = parseText(show);
+        const shownPaths = shown.files.map((file: { path: string }) => file.path);
+        expect(shownPaths).toContain('README.md');
+        expect(shownPaths).not.toContain('.env');
+        expect(shown.patch).not.toContain('a/.env');
+        expect(JSON.stringify(shown)).not.toContain('SECRET=1');
+        // The fixture's absolute symlinks are committed, so their targets are blob content in the
+        // patch, like read_file content; only messages must be free of host paths (M63).
+        expect(shown.patch).toContain('+.env\n\\ No newline at end of file');
+
+        const invalid = await session.client.callTool({ name: 'git_show', arguments: { rev: 'HEAD:.env' } });
+        expect(parseText(invalid).error.code).toBe('INVALID_REVISION');
+        const blocked = await session.client.callTool({ name: 'git_log', arguments: { path: '.env' } });
+        expect(parseText(blocked).error.code).toBe('PATH_BLOCKED');
+        expectNoHostPaths(invalid);
+
+        const records = session
+          .stderr()
+          .split('\n')
+          .filter((line) => line.startsWith('{'))
+          .map((line) => JSON.parse(line));
+        expect(records.find((record) => record.tool === 'git_log' && record.ok)).toMatchObject({ bytes_read: expect.any(Number) });
+        expect(records.find((record) => record.tool === 'git_show' && !record.ok)).toMatchObject({ error_code: 'INVALID_REVISION' });
+        expect(session.stderr()).not.toContain('HEAD:.env');
+        expect(session.stderr()).not.toContain('SECRET=1');
+      } finally {
+        await session.client.close();
+      }
+    });
+
+    it('selects the repository per workspace and rejects a workspace that is not one', async () => {
+      const session = await connect({ WORKSPACE_ROOTS: `api=${repo.root},web=${plain.root}`, WORKSPACE_GIT: 'read-only' });
+      try {
+        const { tools } = await session.client.listTools();
+        for (const name of gitTools) {
+          const tool = tools.find((candidate) => candidate.name === name);
+          expect(tool?.inputSchema.required, name).toContain('workspace');
+        }
+        const ok = parseText(await session.client.callTool({ name: 'git_status', arguments: { workspace: 'api' } }));
+        expect(ok.branch).toBe('main');
+        const rejected = await session.client.callTool({ name: 'git_status', arguments: { workspace: 'web' } });
+        expect(parseText(rejected).error.code).toBe('NOT_A_REPOSITORY');
+        expectNoHostPaths(rejected);
+      } finally {
+        await session.client.close();
+      }
+    });
+
+    it('--check reports git with its version, and git off by default', async () => {
+      const on = await runCli(['--check'], { WORKSPACE_ROOT: repo.root, WORKSPACE_GIT: 'read-only' });
+      expect(on).toMatchObject({ code: 0, stdout: '' });
+      expect(on.stderr).toMatch(/^git: read-only \(git \d+\.\d+\S* at .+\)$/m);
+      const off = await runCli(['--check'], { WORKSPACE_ROOT: repo.root });
+      expect(off.stderr).toMatch(/^git: off$/m);
+    });
+
+    it('fails closed at startup when git is unavailable', async () => {
+      const env = { WORKSPACE_ROOT: repo.root, WORKSPACE_GIT: 'read-only', PATH: plain.outside };
+      const checked = await runCli(['--check'], env);
+      const started = await runCli([], env);
+      expect(checked).toMatchObject({ code: 1, stdout: '' });
+      expect(started).toMatchObject({ code: 1, stdout: '' });
+      expect(started.stderr).toBe(checked.stderr);
+      expect(checked.stderr).toContain('invalid configuration: WORKSPACE_GIT=read-only requires git on PATH');
     });
   });
 

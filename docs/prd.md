@@ -558,6 +558,8 @@ agent에게 host 내부 절대 경로나 secret 정보가 노출되지 않도록
 
 > **Amendment (2026-09-23):** `edit_file`(ADR-002)과 함께 `EDIT_NO_MATCH`, `EDIT_AMBIGUOUS`를 추가한다.
 
+> **Amendment (2026-09-24):** read-only Git tool(ADR-004 2.8절)과 함께 `NOT_A_REPOSITORY`, `UNSAFE_GIT_CONFIG`, `INVALID_REVISION`, `GIT_FAILED`를 추가한다. message는 고정 문구이고 git stderr와 config key 이름은 audit에만 남는다.
+
 ---
 
 # 14. OpenAI Secure MCP Tunnel Integration

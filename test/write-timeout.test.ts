@@ -60,11 +60,12 @@ describe('write tools after TIMEOUT (M43)', () => {
       },
       audit: { maxBytes: 1024 },
       denyPatterns: [],
+      git: false,
     };
     const records: AuditRecord[] = [];
     const deps: ToolDeps = {
       config,
-      workspaces: new Map([['main', { guard, mode: 'read-write' }]]),
+      workspaces: new Map([['main', { guard, mode: 'read-write', root: fixture.realRoot }]]),
       audit: (record) => records.push(record),
     };
     const server = new McpServer({ name: 'pwmcp-test', version: '0.0.0' });

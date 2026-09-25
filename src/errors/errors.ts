@@ -13,6 +13,10 @@ export type ErrorCode =
   | 'INVALID_PATH'
   | 'PERMISSION_DENIED'
   | 'TIMEOUT'
+  | 'NOT_A_REPOSITORY'
+  | 'UNSAFE_GIT_CONFIG'
+  | 'INVALID_REVISION'
+  | 'GIT_FAILED'
   | 'INTERNAL_ERROR';
 
 /**
@@ -20,9 +24,14 @@ export type ErrorCode =
  * so it must only reference workspace-relative paths.
  */
 export class WorkspaceError extends Error {
+  /**
+   * @param detail audit-only `error_detail` (e.g. `exit:128`, a config key name). Never sent to the
+   *   client and must not contain content, secrets, or host paths.
+   */
   constructor(
     readonly code: ErrorCode,
     message: string,
+    readonly detail?: string,
   ) {
     super(message);
     this.name = 'WorkspaceError';

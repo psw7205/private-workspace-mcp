@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 
 import type { Config } from './config/config.js';
+import type { GitInstallation } from './git/runner.js';
 import { DEFAULT_DENY_PATTERNS } from './policy/deny-list.js';
 import { SERVER_NAME, SERVER_VERSION } from './server/server.js';
 
@@ -35,7 +36,7 @@ export function parseCli(args: string[]): CliCommand | undefined {
  * MCP client, so canonical roots and the audit path are shown (M47). Only `Config` fields
  * are printed, never raw environment values.
  */
-export function describeConfig(config: Config): string[] {
+export function describeConfig(config: Config, git?: GitInstallation): string[] {
   const { limits, audit } = config;
   const extra = config.denyPatterns.slice(DEFAULT_DENY_PATTERNS.length);
   return [
@@ -46,5 +47,6 @@ export function describeConfig(config: Config): string[] {
       `request_timeout_ms=${limits.requestTimeoutMs} max_search_files=${limits.maxSearchFiles}`,
     audit.path === undefined ? 'audit: stderr' : `audit: file ${audit.path} (rotate at ${audit.maxBytes} bytes)`,
     `deny: ${DEFAULT_DENY_PATTERNS.length} default patterns${extra.length > 0 ? `, extra: ${extra.join(', ')}` : ''}`,
+    git === undefined ? 'git: off' : `git: read-only (git ${git.version} at ${git.path})`,
   ];
 }

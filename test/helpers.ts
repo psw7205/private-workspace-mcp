@@ -1,9 +1,11 @@
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { WorkspaceError, type ErrorCode } from '../src/errors/errors.js';
 import { PathGuard, type WriteTarget } from '../src/filesystem/path-guard.js';
+import { GIT_NULL_PATH } from '../src/git/runner.js';
 
 export interface Fixture {
   /** Workspace root as created by mkdtemp. On macOS this sits behind the `/var -> /private/var` symlink. */
@@ -125,4 +127,32 @@ export class GatedGuard extends PathGuard {
   open(): void {
     this.release();
   }
+}
+
+/** The environment for test-side git commands: no system or user config, no inherited `GIT_*`. */
+export function testGitEnv(): NodeJS.ProcessEnv {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
+  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_NULL_PATH };
+}
+
+/** Runs git for fixture setup with a fixed identity; never the server's runner. */
+export function runGit(cwd: string, args: string[]): string {
+  const config = ['user.name=Test', 'user.email=test@example.com', 'commit.gpgsign=false', 'tag.gpgsign=false', 'init.defaultBranch=main'];
+  return execFileSync('git', [...config.flatMap((value) => ['-c', value]), '-c', `core.hooksPath=${GIT_NULL_PATH}`, ...args], {
+    cwd,
+    env: testGitEnv(),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+/**
+ * Turns the fixture workspace into a real repository (replacing its placeholder `.git`) with one
+ * commit of everything in it, `.env` included, so history holds a denied file.
+ */
+export async function initRepository(fixture: Fixture): Promise<void> {
+  await rm(path.join(fixture.root, '.git'), { recursive: true, force: true });
+  runGit(fixture.root, ['init', '-q']);
+  runGit(fixture.root, ['add', '-A']);
+  runGit(fixture.root, ['commit', '-q', '-m', 'initial']);
 }
