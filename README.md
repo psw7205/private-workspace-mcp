@@ -1,256 +1,144 @@
 # Private Workspace MCP
 
-private 머신의 workspace(하나 또는 `WORKSPACE_ROOTS`로 여러 개)를 ChatGPT 같은 원격 MCP client에 작고 감사 가능한 filesystem tool로 노출하는 stdio MCP 서버다. OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 실행하므로 public HTTP listener가 없다.
+[![CI](https://github.com/psw7205/private-workspace-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/psw7205/private-workspace-mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/psw7205/private-workspace-mcp)](https://github.com/psw7205/private-workspace-mcp/releases)
+![Node](https://img.shields.io/badge/node-%3E%3D26-339933)
+[![License](https://img.shields.io/github/license/psw7205/private-workspace-mcp)](LICENSE)
 
-```text
-ChatGPT / Responses API
-        │ MCP
-        ▼
-OpenAI Secure MCP Tunnel ◀── outbound HTTPS ── tunnel-client
-                                                   │ stdio
-                                                   ▼
-                                         private-workspace-mcp ──▶ WORKSPACE_ROOT
+**내 머신의 project directory를 ChatGPT에 안전하게 연결하는 MCP 서버.**
+
+OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 실행하는 stdio 서버라서 public HTTP listener가 없다. model에게는 workspace 안에서만 동작하는 작고 감사 가능한 filesystem tool을 주고, shell과 임의 process 실행은 주지 않는다.
+
+![MCP Inspector에서 search_text를 호출한 화면](docs/assets/inspector-search-text.png)
+
+## 특징
+
+- **workspace 밖으로 못 나감**: root는 서버 설정으로만 정하고 realpath로 고정한다. `..`, 절대 경로, symlink 탈출은 `PATH_OUTSIDE_WORKSPACE`로 거부한다.
+- **민감 파일 차단**: `.env`, `*.pem`, `.ssh`, `credentials*` 등은 읽기·쓰기가 `PATH_BLOCKED`로 거부되고, 목록·검색·Git 결과에서는 존재 여부도 드러내지 않고 빠진다. 기본 deny 목록은 설정으로 지울 수 없다.
+- **기본 read-only, 쓰기는 revision 기반**: 기존 파일은 읽을 때 받은 `revision`이 맞아야만 atomic하게 교체한다. 그 사이 사람이 파일을 고쳤다면 `REVISION_CONFLICT`로 막는다.
+- **적용 전 diff 확인**: `edit_file`·`multi_edit_file`의 `dry_run`은 쓰지 않고 unified diff만 돌려준다.
+- **여러 repo를 tunnel 하나로**: `WORKSPACE_ROOTS=api=…,web=…`로 띄우고 repo별로 read-write를 따로 줄 수 있다.
+- **Git은 opt-in read-only**: `WORKSPACE_GIT=read-only`면 `git_status`·`git_diff`·`git_log`·`git_show`가 켜진다. hook, filter, network는 모두 끈 채로 실행한다.
+- **모든 호출을 audit**: tool call마다 JSON Lines 1건을 남기고, 파일 내용과 secret은 기록하지 않는다.
+
+## 동작 구조
+
+```mermaid
+flowchart LR
+  subgraph OpenAI
+    C["ChatGPT /<br/>Responses API"] -- MCP --> T["Secure MCP Tunnel"]
+  end
+  subgraph M["내 머신 (inbound port 없음)"]
+    TC["tunnel-client"] -- stdio --> S["private-workspace-mcp"]
+    S -- PathGuard --> W[("WORKSPACE_ROOT")]
+    S -. audit .-> A[("audit.jsonl")]
+  end
+  TC -- outbound HTTPS --> T
 ```
 
-이 서버는 coding agent가 아니라 capability provider다. shell과 임의 process 실행은 제공하지 않는다(PRD 4, ADR-001 §15). Git은 운영자가 `WORKSPACE_GIT=read-only`로 켰을 때만 read-only typed tool 4개로 제공한다(ADR-004).
+## 예시
 
-- 요구사항과 설계: [`docs/prd.md`](docs/prd.md), [`docs/adr/`](docs/adr/)
-- 문서에 없던 결정, 잔여 위험, 검증 결과, TODO: [`docs/implementation-notes.md`](docs/implementation-notes.md)
-- 바뀐 결정 찾기: PRD·ADR 원문은 두고 해당 절에 `Amendment (날짜)`를 덧붙인다(`grep -rn "Amendment (" docs`). 새 결정은 `docs/adr/NNN-*.md`, 세부 결정은 implementation notes의 M 표, 변경 이유는 `git log -- docs/`
-- agent 작업 규칙: [`AGENTS.md`](AGENTS.md)
+demo fixture에 실제 서버를 띄우고 호출한 결과다(응답은 일부 줄임).
 
-## Quick start
+**TODO 찾기**: `search_text {"query": "TODO"}`
 
-```sh
-mise install          # Node 26, pnpm (mise.toml)
-pnpm install --frozen-lockfile
-pnpm build
-WORKSPACE_ROOT="$PWD" node dist/index.js   # stdio로 대기. 기본 read-only
+```json
+{
+  "matches": [
+    { "path": "src/config.ts", "line": 2, "column": 6, "text": "  // TODO: move timeouts into env" },
+    { "path": "src/server.ts", "line": 3, "column": 4, "text": "// TODO: read the port from config" }
+  ],
+  "files_searched": 4,
+  "truncated": false
+}
 ```
 
-MCP Inspector로 직접 호출해 볼 수 있다. 서버 환경 변수는 `-e`로 넘긴다.
+**고치기 전에 diff 보기**: `read_file`로 받은 `revision`을 넣고 `edit_file`을 `dry_run: true`로 호출한다.
+
+```diff
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -1,7 +1,7 @@
+ import { createServer } from 'node:http';
+ 
+ // TODO: read the port from config
+-const PORT = 3000;
++const PORT = Number(process.env.PORT ?? 3000);
+ 
+ createServer((req, res) => {
+   res.end('ok');
+```
+
+**막히는 요청**: secret 파일과 workspace 밖 경로는 오류로 끝나고, message에 host 경로가 들어가지 않는다.
+
+```jsonc
+// read_file {"path": ".env"}
+{ "error": { "code": "PATH_BLOCKED", "message": ".env is blocked by the sensitive file policy" } }
+
+// read_file {"path": "../../etc/passwd"}
+{ "error": { "code": "PATH_OUTSIDE_WORKSPACE", "message": "\"..\" segments are not allowed" } }
+```
+
+<details>
+<summary>Inspector 화면: <code>.env</code> 읽기 거부</summary>
+
+![MCP Inspector에서 .env 읽기가 PATH_BLOCKED로 거부된 화면](docs/assets/inspector-path-blocked.png)
+
+</details>
+
+## 빠른 시작
+
+전체 절차와 옵션은 **[시작하기 가이드](docs/getting-started.md)**에 있다.
+
+**로컬에서 먼저 써 보기** (tunnel 없이 MCP Inspector로):
 
 ```sh
+mise install && pnpm install --frozen-lockfile && pnpm build
 npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.js
 ```
 
+**ChatGPT에 연결하기**:
+
+1. **설치**: GitHub Release의 `index.mjs`를 받고 checksum과 attestation을 검증한다. → [설치](docs/getting-started.md#1-설치)
+2. **설정 확인**: `WORKSPACE_ROOT=<project> node index.mjs --check`로 root와 mode를 확인한다. → [설정 확인](docs/getting-started.md#2-설정-확인)
+3. **tunnel profile**: `tunnel-client init`으로 이 서버를 child command로 등록한다. → [profile](docs/getting-started.md#3-tunnel-profile-만들기)
+4. **daemon 실행**: `tunnel-client run`을 띄운다. → [실행](docs/getting-started.md#4-daemon-실행)
+5. **connector**: ChatGPT Developer mode에서 Tunnel connector를 **인증 없음**으로 추가한다. → [connector](docs/getting-started.md#5-chatgpt-connector-연결)
+
 ## Tools
 
-| tool | 설명 |
+| tool | 하는 일 | 쓰기 |
+|------|---------|:----:|
+| `get_workspace_info` | workspace 이름, mode, limit | |
+| `list_directory` | directory 목록(depth 지정) | |
+| `read_file` | UTF-8 파일 읽기(line pagination), `revision` 반환 | |
+| `find_files` | glob으로 파일 찾기(`.gitignore` 존중) | |
+| `search_text` | literal 또는 RE2 regex 검색 | |
+| `write_file` | 파일 생성 또는 전체 교체 | ✓ |
+| `edit_file` | exact-match 문자열 교체, `dry_run` diff | ✓ |
+| `multi_edit_file` | 한 파일에 여러 edit를 atomic하게 적용 | ✓ |
+| `git_status` · `git_diff` · `git_log` · `git_show` | read-only Git 조회(`WORKSPACE_GIT=read-only`일 때만) | |
+
+인자, 반환값, error code, 환경 변수는 [reference](docs/reference.md)에 있다.
+
+## 보안
+
+path 검증은 defense-in-depth이고, 최종 경계는 전용 OS 사용자나 container 같은 OS 권한이다. read-write 모드에서는 파일에 심어진 prompt injection이 쓰기 호출로 이어질 수 있으므로 ChatGPT의 write 확인을 끄지 않는다. 방어 계층, Git hardening, client 승인 설정은 [보안 모델](docs/security.md)에 있다.
+
+## 문서
+
+| 문서 | 내용 |
 |------|------|
-| `get_workspace_info` | workspace 이름과 mode(`WORKSPACE_ROOTS`면 `workspaces: [{ name, mode }]` 목록), platform, limits. host 절대 경로는 반환하지 않음 |
-| `list_directory` | `path`(기본 `.`), `depth`(기본 1), `limit`. 이름순, depth-first. symlink는 따라가지 않고 민감 파일과 특수 파일은 생략 |
-| `read_file` | UTF-8 텍스트 파일. `start_line`/`max_lines`로 line pagination. 파일 전체 기준 `revision`(`sha256:…`) 반환 |
-| `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성 |
-| `find_files` | `path`(기본 `.`) 아래를 depth 제한 없이 glob으로 검색. 패턴은 `path` 기준 상대 경로에 적용(`**/*.ts`). `*`, `?`, `**`, `{a,b}`만 특수 문자(패턴 256자까지)이고 대소문자를 구분. `.`으로 시작하는 이름은 패턴에 명시해야 맞음. `.gitignore`/`.ignore` 대상은 `include_ignored: true`가 아니면 제외. 결과는 파일 경로와 크기 |
-| `search_text` | `path` 아래 UTF-8 텍스트 파일에서 literal 문자열 검색. `regex: true`면 `query`를 RE2 문법 regex로 검색(선형 시간 엔진 `re2js`, backreference·lookaround 없음, `\d`·`\w`·`\b`는 ASCII, 줄 단위라 `^`·`$`는 줄 경계, 256자 이하, 너무 복잡한 패턴은 `INVALID_PATH`). 줄마다 첫 match의 경로·줄·열·줄 내용 반환. `glob`, `case_sensitive`(기본 false), `include_ignored`, `limit`. binary·non-UTF-8·read limit 초과 파일은 건너뜀 |
-| `edit_file` | 기존 파일의 exact-match 문자열 교체(ADR-002). `old_string`은 한 번만 나와야 하고 여러 번이면 `replace_all`. `expected_revision` 필수, 새 `revision` 반환. `dry_run: true`면 모든 검사만 하고 쓰지 않은 채 적용 시의 `revision`과 unified `diff`(context 3줄, 64 KiB에서 자르고 `diff_truncated`)를 반환 |
-| `multi_edit_file` | 한 파일에 `edits` 배열(최대 100개, 각 항목은 `edit_file`과 같은 `old_string`/`new_string`/`replace_all`)을 순서대로 적용하고 한 번에 쓴다. 뒤 edit는 앞 edit의 결과에 match한다. 하나라도 실패하면 파일은 바뀌지 않고 오류 message가 `edits[i]`로 실패한 edit를 가리킴. 전체·edit별 교체 횟수와 새 `revision` 반환. `dry_run`은 `edit_file`과 같음 |
+| [시작하기](docs/getting-started.md) | 설치, tunnel 연결, 업그레이드, 여러 repo, container, 문제 해결 |
+| [Reference](docs/reference.md) | tool 인자, error code, 환경 변수, CLI |
+| [보안 모델](docs/security.md) | 방어 계층, Git hardening, prompt injection과 승인 |
+| [PRD](docs/prd.md) · [ADR](docs/adr/) | 요구사항과 아키텍처 결정 |
+| [Implementation notes](docs/implementation-notes.md) | 문서에 없던 결정, 잔여 위험, 검증 결과, TODO |
 
-`WORKSPACE_GIT=read-only`면 다음 4개가 추가된다(ADR-004). 모두 `readOnlyHint: true`이고 `WORKSPACE_MODE`와 무관하게 동작한다. workspace root가 repository toplevel이고 `<root>/.git`이 실제 directory일 때만 동작하며, 하위 directory·gitfile(linked worktree, submodule)·symlink `.git`은 `NOT_A_REPOSITORY`다. rev는 `HEAD`, commit id(hex 4~64자), branch·tag·remote-tracking branch 이름에 `~N`·`^N`만 붙일 수 있다. range, reflog(`@{…}`), `rev:path`, `stash`, notes는 `INVALID_REVISION`이다.
+## 개발
 
-| tool | 설명 |
-|------|------|
-| `git_status` | 현재 branch(detached면 `null`), HEAD `oid`, `upstream`과 다른지 여부(`upstream_differs`, 개수는 세지 않음), 변경 entry(`path`, `orig_path`, porcelain v2 `index`/`worktree` 상태 글자, untracked는 파일 단위 `?`) |
-| `git_diff` | 변경 파일 목록과 unified patch. 기본은 worktree↔index, `staged: true`면 index↔`HEAD`, `base`(와 `head`, 기본 `HEAD`)면 두 commit 사이. `path`로 파일·directory를 제한(지운 파일도 가능). untracked 파일은 없음 |
-| `git_log` | `rev`(기본 `HEAD`)부터 commit 목록(`oid`, `parents`, author·committer 이름·email·시각, message). `path`로 그 경로를 바꾼 commit만, `max_count` 기본 20·최대 200. 변경 파일 목록은 없음 |
-| `git_show` | commit 1개의 metadata와 first parent 대비 파일 목록·patch(root commit은 빈 tree 대비) |
+개발 환경, 명령, 테스트 규칙, 릴리즈 절차, 코드 구조는 [`AGENTS.md`](AGENTS.md)에 있다. 사람과 coding agent가 같은 규칙을 따른다.
 
-deny 대상 파일은 status·diff·show 결과에서 존재 여부도 드러내지 않고 빠진다(과거 commit의 `.env` 포함). git 명령 하나의 출력이 `WORKSPACE_MAX_READ_BYTES`를 넘으면 잘리고 `truncated: true`가 된다. patch는 마지막 완전한 파일 section까지 남는다. rename detection은 하지 않고 binary 파일은 `Binary files … differ` 한 줄이다.
+## License
 
-모든 path는 workspace root 기준 상대 경로이고 `/`로 구분한다. `WORKSPACE_ROOTS`로 띄우면 `get_workspace_info`를 뺀 7개 tool이 필수 인자 `workspace`(설정한 이름의 enum)를 받고, path는 그 workspace root 기준이다(ADR-008). Git tool 4개도 같다. repository가 아닌 workspace는 `NOT_A_REPOSITORY`를 받는다. 실패는 `isError: true` tool result로 오며 본문은 `{"error":{"code":"…","message":"…"}}` 형태다.
-
-| code | 의미 |
-|------|------|
-| `PATH_OUTSIDE_WORKSPACE` | 절대 경로, `..`, symlink 등으로 workspace 밖을 가리킴 |
-| `PATH_BLOCKED` | 민감 파일 deny pattern에 걸림 |
-| `INVALID_PATH` | 경로 문법 오류, 잘못되거나 상한을 넘는 glob·regex 패턴(`find_files`·`search_text`), symlink 대상에 쓰기, 깨진 symlink 아래에 쓰기 |
-| `FILE_NOT_FOUND` / `NOT_A_FILE` / `NOT_A_DIRECTORY` | 대상 상태 불일치 |
-| `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일, lone surrogate가 든 write content나 `old_string`/`new_string` |
-| `READ_ONLY` | read-only workspace에 write 시도(`write_file`·`edit_file`·`multi_edit_file`, `dry_run` 포함) |
-| `REVISION_CONFLICT` | 읽은 뒤 파일이 바뀜, 이미 존재하는 파일을 revision 없이 생성 시도 |
-| `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS` | `edit_file`·`multi_edit_file`의 `old_string`이 없음, 여러 번 나오는데 `replace_all`이 아님 |
-| `NOT_A_REPOSITORY` | Git tool: workspace root가 `.git` directory를 가진 repository toplevel이 아님 |
-| `UNSAFE_GIT_CONFIG` | Git tool: repo config가 workspace 안(`.git` 밖) 파일을 include하거나 path 값으로 가리킴, `hook.*` key가 있음. 어떤 key인지는 audit log에만 |
-| `INVALID_REVISION` | Git tool: 받지 않는 rev 형식·namespace, 없는 commit, `head`만 주거나 `staged`와 `base`를 함께 줌 |
-| `GIT_FAILED` | Git tool: git이 비정상 종료. git stderr는 보내지 않고 audit에 exit code만 남김 |
-| `PERMISSION_DENIED` / `TIMEOUT` / `INTERNAL_ERROR` | OS 권한, 시간 초과, 기타 (상세는 audit log에만) |
-
-## 보안 모델
-
-- **workspace 고정**: root는 서버 설정(`WORKSPACE_ROOT` 또는 `WORKSPACE_ROOTS`)으로만 정하고 startup 시 realpath로 고정한다. MCP Roots는 쓰지 않는다. root가 사실상 sandbox 경계이므로 filesystem root, home directory, home의 상위 directory는 startup에서 거부한다. 여러 root는 서로 겹칠 수 없다. agent 전용 directory를 root로 쓴다.
-- **`PathGuard`**: workspace마다 하나다. 입력 문법 검사(`..`, 절대/drive/UNC 경로, Windows alias 거부) 후 realpath로 canonical 경로를 구해 containment를 판정한다. 문자열 prefix 비교는 쓰지 않는다.
-- **민감 파일 deny**: `.env`, `.env.*`, `*.pem`, `*.key`, `.ssh`, `.aws`, `.gnupg`, `.npmrc`, `.netrc`, `credentials*`, `secret*`, `.git`, `.git-credentials`, `service-account*.json`, `id_rsa*`, `id_ed25519*`, `*.tfstate`, `*.tfstate.*`, `.kube`, `kubeconfig*`, `.docker`, `.pypirc`, `*.p12`, `*.pfx`. 입력 경로와 canonical 경로 양쪽에 case-insensitive로 적용한다. 운영자는 추가만 할 수 있다.
-- **안전한 write**: 기본 read-only. `WORKSPACE_ROOTS`면 `WORKSPACE_READ_WRITE`에 나열한 workspace만 쓸 수 있다(`WORKSPACE_READ_WRITE` 없이 `WORKSPACE_MODE=read-write`면 모든 workspace). 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
-- **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, edit dry run이면 `dry_run: true`, 성공 여부, 소요 시간, bytes, error code). 파일 내용과 secret은 기록하지 않는다.
-
-- **Git (opt-in)**: system `git`을 shell 없이 startup에 고정한 절대 경로로 실행한다(workspace 안의 `git`은 쓰지 않음). child env는 상속하지 않고 새로 만들어 `CONTROL_PLANE_API_KEY`, `GIT_*`, `SSH_*`, `HOME`이 가지 않는다. system·global config, pager, hooks, fsmonitor, filter, textconv, external diff, 서명 검증, network(lazy fetch 포함), replace ref를 인자·env로 끄고, worktree `.gitattributes` 대신 HEAD의 것만 읽는다. index를 다시 쓰는 명령은 쓰지 않는다. 호출마다 repository 경계와 repo config를 확인하고, model이 쓸 수 있는 파일을 config로 끌어오면 `UNSAFE_GIT_CONFIG`로 거부한다. rev는 hex OID로 바꾼 뒤에만 넘겨 option injection이 구조적으로 막힌다. deny 목록은 pathspec exclude와 파일 목록 검사 두 겹으로 적용한다. timeout·출력 상한·서버 종료 때 git process group 전체를 끝낸다(POSIX). history는 현재 이름 기준 deny로 막지 못하는 내용(rename된 secret, 과거 파일, commit message)을 드러내므로 기본은 꺼짐이다. 잔여 위험은 implementation notes 3절에 있다.
-
-path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자나 container 같은 OS 권한이다(ADR-001 §11). 잔여 위험은 implementation notes 3절에 있다.
-
-read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(prompt injection)가 `write_file`·`edit_file` 호출로 이어질 수 있다(`multi_edit_file`도 같다). revision 검사는 lost update를 막을 뿐 이 경로를 막지 않는다(model도 `read_file`로 revision을 얻는다). 서버는 쓰기 tool 모두에 `readOnlyHint: false`, `destructiveHint: true`를 선언한다. annotations는 tool 단위라 `dry_run` 호출에도 같다. client 쪽 approval은 서버 권한 판단의 근거가 아닌 보조 방어로 쓴다(ADR-001 §14).
-
-- Responses API: `require_approval: {"never": {"tool_names": ["get_workspace_info", "list_directory", "read_file", "find_files", "search_text"]}}`로 읽기 tool만 자동 실행하고 나머지는 승인을 받는다. `WORKSPACE_GIT=read-only`면 `git_status`, `git_diff`, `git_log`, `git_show`도 읽기 tool이지만 history는 deny 이름으로 막지 못하는 과거 내용을 드러내므로, 자동 실행 목록에 넣을지는 따로 판단한다. 쓰기가 필요 없으면 `allowed_tools`로 읽기 tool만 노출하거나 서버를 read-only로 띄운다.
-- ChatGPT: write tool 호출 확인을 끄지 않는다.
-
-## 설정 (env)
-
-| env | 기본값 | 설명 |
-|-----|--------|------|
-| `WORKSPACE_ROOT` | (이것 또는 `WORKSPACE_ROOTS` 필수) | 절대 경로. startup 시 realpath로 고정 |
-| `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,name2=/abs/path`. workspace 여러 개(ADR-008). 이름은 소문자·숫자·`-`·`_`(64자 이하), 각 항목은 첫 `=`에서 나누며 경로에 `,`는 쓸 수 없음. root끼리 겹치면 거부. `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓸 수 없음 |
-| `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write`. `WORKSPACE_ROOTS`에서 `WORKSPACE_READ_WRITE` 없이 쓰면 모든 workspace에 적용 |
-| `WORKSPACE_READ_WRITE` | (없음) | `WORKSPACE_ROOTS`에서 read-write로 둘 workspace 이름 목록(예: `api` 또는 `api,web`). 나열하지 않은 workspace는 read-only. 빈 값은 설정하지 않은 것과 같다. 값이 있을 때 `WORKSPACE_ROOT`나 `WORKSPACE_MODE`와 함께 주거나, 없는 이름·중복·빈 항목이 있으면 startup에서 거부 |
-| `WORKSPACE_NAME` | root basename | `get_workspace_info`의 `name` (`WORKSPACE_ROOT` 전용) |
-| `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이보다 큰 파일은 `FILE_TOO_LARGE` |
-| `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | write content 최대 크기 (UTF-8 bytes) |
-| `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 응답 최대 entry 수 |
-| `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
-| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도) |
-| `WORKSPACE_MAX_SEARCH_FILES` | `10000` | `find_files`/`search_text` 한 번이 살펴보는 파일 수 상한 |
-| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. 모든 workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
-| `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
-| `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
-| `WORKSPACE_GIT` | (없음 → 꺼짐) | `read-only`면 Git tool 4개를 등록한다. 다른 값은 거부. 켜져 있는데 workspace 밖 `PATH`에서 git을 찾지 못하거나 git이 `--attr-source` 등 필요한 인자를 지원하지 않으면 startup 실패. `--check`가 찾은 git의 version과 경로를 보여준다 |
-
-Git을 켤 때는 workspace root를 repository toplevel(main checkout)로 둔다. Windows는 Git for Windows를 전제로 하고, PATH의 launcher(`bin\git.exe`, `cmd\git.exe`) 대신 `git --exec-path`로 찾은 실제 `<prefix>\bin\git.exe`를 실행한다(종료 시 손자 process가 남지 않게). 그 배치가 아니면 startup에서 거부한다. system config를 읽지 않으므로 Git for Windows가 system에 두는 `core.autocrlf=true`가 빠져 `git_status`가 운영자의 git과 다르게 보일 수 있다. 필요하면 repo config에 둔다. LFS처럼 filter가 필요한 파일은 filter를 끄므로 stat만 바뀌어도 modified로 보일 수 있다. repo config가 worktree 안 파일을 include하거나 `hook.*`을 쓰면 Git tool은 동작하지 않는다.
-
-정수 설정은 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다. 값이 잘못되면 stderr에 이유를 출력하고 exit code 1로 종료한다(fail closed). stdout은 MCP protocol 전용이다. startup 메시지는 stderr로, audit log는 `WORKSPACE_AUDIT_LOG`가 있으면 그 파일로, 없으면 stderr로 나간다.
-
-## 설치 (release)
-
-daemon을 띄울 머신에는 GitHub Release의 `index.mjs` 하나만 설치한다. runtime dependency가 bundle에 들어 있어 Node 26 외에 source, pnpm, `node_modules`가 필요 없다. 버전마다 directory를 두고 `current` symlink로 가리킨다.
-
-```sh
-VERSION=v0.2.0
-DIR="$HOME/.local/share/private-workspace-mcp"
-mkdir -p "$DIR/$VERSION" && cd "$DIR/$VERSION"
-gh release download "$VERSION" --repo psw7205/private-workspace-mcp
-shasum -a 256 -c SHA256SUMS
-gh attestation verify index.mjs --repo psw7205/private-workspace-mcp
-ln -sfn "$VERSION" "$DIR/current"
-$(mise which node) "$DIR/current/index.mjs" --version
-```
-
-- `gh attestation verify`는 파일이 이 repo의 release workflow에서 build됐는지 Sigstore 서명으로 확인한다. checksum만으로는 Release asset이 바뀐 경우를 막지 못한다.
-- 같은 방법으로 새 버전을 받고 `current`를 바꾼 뒤, profile의 `--mcp-command`와 같은 env로 `$(mise which node) "$DIR/current/index.mjs" --check`가 통과하는지 확인하고(아래 연결 절) daemon을 다시 띄우면 업그레이드가 끝난다. rollback은 `current`를 이전 버전으로 되돌리면 된다. profile은 고치지 않는다.
-- source를 build해 쓰려면 아래 `<entry>` 자리에 repo의 `dist/index.js`를 넣고, 업그레이드할 때 `pnpm build`를 다시 한다.
-
-## OpenAI Secure MCP Tunnel 연결
-
-`tunnel-client`는 Homebrew(`brew install openai/tools/tunnel-client`)로 설치한다. child는 `tunnel-client`의 환경 변수를 상속하고, child의 stderr는 `tunnel-client` 로그로 전달된다(`tunnel-client` 0.0.14에서 확인). 서버 설정은 command에 명시하고, runtime key는 child에 넘기지 않는다.
-
-tunnel ID(Platform > Tunnels)와 runtime API key(admin key 아님)는 `.env`에 둔다. `.env`는 git에 올라가지 않는다.
-
-```sh
-cp .env.example .env    # TUNNEL_ID, API_KEY 입력
-```
-
-profile은 한 번만 만든다. profile은 `~/.config/tunnel-client/`에 머신별로 저장되고 절대 경로가 들어가므로 git으로 옮겨지지 않는다.
-
-profile을 만들기 전에 `--mcp-command`에 넣을 env와 entry 그대로 `--check`를 실행해 설정을 확인한다. 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. audit file은 만들지 않는다.
-
-```sh
-env WORKSPACE_ROOT=<project> WORKSPACE_MODE=read-write WORKSPACE_AUDIT_LOG=<audit-dir>/audit.jsonl $(mise which node) <entry> --check
-```
-
-```sh
-set -a && . ./.env && set +a
-tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
-  --tunnel-id "$TUNNEL_ID" \
-  --mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY WORKSPACE_ROOT=<project> WORKSPACE_MODE=read-write WORKSPACE_AUDIT_LOG=<audit-dir>/audit.jsonl $(mise which node) <entry>"
-```
-
-- `<entry>`는 release 설치면 `$HOME/.local/share/private-workspace-mcp/current/index.mjs`, source build면 repo의 `dist/index.js` 절대 경로다.
-- `<project>`는 agent 전용 directory의 절대 경로다(filesystem root와 home은 거부됨). `<audit-dir>`는 workspace 밖의 기존 directory다. 빼면 audit은 `tunnel-client` 로그로 간다.
-- profile을 고칠 때도 같은 env로 `--check`를 먼저 돌린다. `--check`와 `--version` 외의 인자를 주면 usage를 내고 exit 2로 끝난다.
-- node는 `$(mise which node)`로 절대 경로를 넣는다. `tunnel-client`를 띄우는 shell에 mise가 활성화돼 있지 않으면 PATH의 `node`가 Node 26이 아닐 수 있다. 경로와 mode를 바꾸려면 `tunnel-client profiles edit workspace-mcp`로 고친다.
-
-실행할 때마다 `.env`의 `API_KEY`를 `CONTROL_PLANE_API_KEY`로 넘긴다. subshell에서 원래 이름을 지우므로 child에는 key가 전달되지 않는다. tunnel ID는 `init`이 profile에 적어 두므로 넘기지 않는다. `tunnel-client` 설정 우선순위는 flags > 환경 변수 > profile YAML이라 `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어쓴다.
-
-```sh
-( set -a && . ./.env && set +a
-  export CONTROL_PLANE_API_KEY="$API_KEY"
-  unset TUNNEL_ID API_KEY
-  tunnel-client doctor --profile workspace-mcp --explain && exec tunnel-client run --profile workspace-mcp )
-```
-
-`run`이 떠 있는 동안에만 ChatGPT가 tool을 호출할 수 있다. 상태는 `http://127.0.0.1:8080/ui`와 `/readyz`로 본다.
-
-OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. container에는 workspace와 audit log directory만 mount되므로 PathGuard에 결함이 있어도 host의 다른 파일에 닿지 않는다. `-i`는 필수이고 `-t`는 쓰지 않는다(stdout이 MCP channel).
-
-```sh
---mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY docker run -i --rm --network none --read-only -u 12345:12345 \
-  -v <repo>:/app:ro -v <project>:/workspace -v <audit-dir>:/logs \
-  -e WORKSPACE_ROOT=/workspace -e WORKSPACE_MODE=read-write -e WORKSPACE_AUDIT_LOG=/logs/audit.jsonl \
-  node:26-bookworm node /app/dist/index.js"
-```
-
-`<repo>`는 `pnpm install`과 `pnpm build`를 마친 이 repo다. Linux host에서는 `-u`로 준 uid가 `<project>`의 파일을 읽고 쓸 수 있어야 하고, 새 파일은 그 uid 소유로 생긴다(Docker Desktop for Mac은 host 사용자로 매핑한다). `WORKSPACE_ROOTS`를 쓰면 repo마다 `-v <repo-a>:/workspaces/api`처럼 mount하고 `-e WORKSPACE_ROOTS=api=/workspaces/api,web=/workspaces/web`을 준다. `docker run` 단독 stdio 호출은 확인했지만 `tunnel-client` 경유는 아직 확인하지 않았다(implementation notes 6절).
-
-`run`이 healthy인 동안 ChatGPT에서 connector를 만든다.
-
-1. Settings > Security and login에서 Developer mode를 켠다.
-2. https://chatgpt.com/plugins 에서 새 connector를 추가하고 Connection으로 Tunnel을 골라 tunnel을 선택한다(또는 `tunnel_id` 입력).
-3. 인증은 **인증 없음(No authentication)**을 고른다. 이 서버는 OAuth를 구현하지 않으므로 OAuth를 고르면 "does not implement OAuth" 오류가 난다. 접근 통제는 OpenAI의 tunnel 권한이 맡는다(ADR 17 Amendment).
-4. tool 8개(`WORKSPACE_GIT=read-only`면 12개)가 발견되는지 확인한다.
-
-connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다. 새 버전에서 tool 목록, description, schema가 바뀌었으면 다음 순서로 반영한다. 내부 동작만 바뀌었으면 1까지만 한다.
-
-1. 새 release를 설치해 `current`를 바꾸고(source build면 `pnpm build`) profile과 같은 env로 `--check`를 통과하는지 본 뒤 daemon을 다시 띄운다.
-2. https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른다.
-3. 새 대화를 시작한다. 기존 대화에는 이전 tool 목록이 남을 수 있다.
-
-Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
-
-주의:
-
-- tunnel ID 하나에는 `tunnel-client` instance 하나만 실행한다. stdio child가 instance마다 따로 뜨기 때문이다.
-- 한 머신의 repo 여러 개는 tunnel 하나로 노출한다. `--mcp-command`의 `WORKSPACE_ROOT=<project>`를 `WORKSPACE_ROOTS=api=<repo-a>,web=<repo-b>`로 바꾸면 child 하나가 모든 repo를 다루고 model은 tool 인자 `workspace`로 repo를 고른다(ADR-008). repo를 더하거나 빼면 tool schema가 바뀌므로 daemon을 다시 띄우고 connector를 Refresh한다. 일부 repo만 쓰게 하려면 `WORKSPACE_MODE=read-write` 대신 `WORKSPACE_READ_WRITE=api`처럼 이름을 나열한다. 나머지 repo는 read-only이고 `write_file`·`edit_file`·`multi_edit_file` description에 쓰기 가능한 이름이 적힌다. `WORKSPACE_READ_WRITE`는 `WORKSPACE_MODE`와 함께 쓸 수 없으므로 `WORKSPACE_MODE=read-write`는 지운다. 이 tunnel을 쓸 수 있는 사용자는 모든 repo에 접근한다.
-- repo마다 mode가 다른 것은 위처럼 `WORKSPACE_READ_WRITE`로 한 tunnel 안에서 처리한다. tunnel, profile, daemon, connector는 접근할 사람이나 용도가 달라야 할 때, 또는 read/write limit·timeout·추가 deny pattern처럼 서버 전체에 걸리는 설정이 repo마다 달라야 할 때만 따로 둔다. profile마다 `health.listen_addr` port(`8080`, `8081`, …)와 `WORKSPACE_AUDIT_LOG` 파일을 다르게 하고, 실행 명령의 `--profile`만 바꾼다. `tunnel-client`의 channel별 command(`--mcp.command channel=...`)는 OpenAI 쪽에서 channel을 고를 수단이 없어 쓰지 않는다.
-- 공통 상위 directory를 root로 잡으면 다른 repo까지 노출되고, root 밖을 가리키는 symlink는 `PATH_OUTSIDE_WORKSPACE`로 거부된다.
-- 여러 머신에서 쓸 때는 머신마다 tunnel과 connector를 따로 만든다. 같은 tunnel을 여러 머신에서 쓰려면 한 번에 한 머신에서만 daemon을 띄운다. 이때 connector는 그대로 쓸 수 있지만, 연결되는 workspace는 그 머신 profile의 `WORKSPACE_ROOT`(또는 `WORKSPACE_ROOTS`)다.
-- MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 tunnel-client에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로, 그럴 때는 `tunnel-client`를 재시작한다(implementation notes 4절).
-
-## 개발과 검증
-
-```sh
-pnpm typecheck     # TypeScript 7
-pnpm test          # unit + stdio integration (서버 process를 직접 spawn)
-pnpm build         # dist/index.js
-pnpm bundle        # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS
-pnpm e2e:tunnel    # tunnel-client dev proxy 경유 e2e (tunnel-client 필요, OpenAI credential 불필요)
-```
-
-`pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, `WORKSPACE_ROOTS`·`WORKSPACE_READ_WRITE` multi case, `WORKSPACE_GIT=read-only` repo의 Git tool 호출, tunnel-client 종료 시 child 정리를 확인한다.
-
-ChatGPT UI(hosted) 경로로 미출시 기능을 확인하는 수동 절차는 [`docs/hosted-verification.md`](docs/hosted-verification.md)에 있다.
-
-`TEST_SERVER_ENTRY=release/index.mjs`를 주면 `test/stdio.test.ts`와 `pnpm e2e:tunnel`이 source 대신 bundle을 실행한다.
-
-CI(`.github/workflows/ci.yml`)는 ubuntu, macOS, windows에서 typecheck, test, build를 실행하고, bundle로 stdio test를 한 번 더 돌린다.
-
-## 릴리즈
-
-1. `package.json`의 `version`과 `src/server/server.ts`의 `SERVER_VERSION`을 올린다. 둘이 다르면 stdio test가 실패한다.
-2. `main`에 commit하고 push한 뒤 CI가 통과하는지 본다.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z`. `.github/workflows/release.yml`이 tag와 `package.json` version이 같은지 확인하고, test와 bundle 뒤에 attestation을 만들어 GitHub Release에 `index.mjs`, `index.mjs.map`, `THIRD_PARTY_LICENSES.txt`, `SHA256SUMS`를 올린다.
-
-bundle은 minify하지 않는다. release된 파일을 그대로 읽고 감사할 수 있게 하기 위해서다.
-
-## 구조
-
-```text
-src/
-  index.ts                 stdio entry: config 로드, serveStdio, 종료 처리
-  server/server.ts         McpServer factory와 tool 등록
-  tools/                   tool 정의(schema, annotation)와 공통 runTool(timeout, error 변환, audit)
-  filesystem/              PathGuard, reader, lister, writer, editor, 검색(walker, glob, ignore 파일), revision
-  policy/deny-list.ts      민감 파일 deny pattern
-  git/                     Git read-only runner(hardened env·인자, process group), repository·config·rev 검사, status/diff/log/show (ADR-004)
-  config/config.ts         env 파싱과 검증
-  audit/audit-log.ts       stderr/file audit sink
-  errors/errors.ts         error code와 fs error 변환
-test/                      vitest (security case 중심, fixture는 임시 디렉터리)
-scripts/e2e-tunnel-client.ts
-```
+[Apache-2.0](LICENSE)

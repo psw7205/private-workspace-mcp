@@ -1,6 +1,6 @@
 # AGENTS.md
 
-이 repo에서 작업하는 coding agent를 위한 규칙이다. 제품 개요와 사용법은 `README.md`에 있다.
+이 repo에서 개발하는 사람과 coding agent를 위한 규칙이다. 제품 개요와 사용법은 `README.md`와 `docs/getting-started.md`에 있다.
 
 ## 먼저 읽을 것
 
@@ -9,20 +9,44 @@
 - 문서에서 결정되지 않은 중요한 사항은 임의로 확장하지 말고 가장 단순하고 보수적인 쪽을 택한다. 택한 결정은 `docs/implementation-notes.md`에 기록한다.
 - ADR 원문은 고치지 않는다. 결정이 바뀌면 해당 절에 `Amendment (날짜)`를 추가한다.
 - implementation notes의 M 항목도 덮어쓰지 않는다. 결정이 바뀌면 새 M 항목을 추가하고 원래 항목에 `(이후 Mxx로 대체)`를 표시한다.
+- 바뀐 결정 찾기: `grep -rn "Amendment (" docs`. 새 결정은 `docs/adr/NNN-*.md`, 세부 결정은 implementation notes의 M 표, 변경 이유는 `git log -- docs/`.
+
+## 문서 배치
+
+| 문서 | 독자 | 담는 것 |
+|------|------|---------|
+| `README.md` | 처음 온 사용자 | 소개, 예시, 빠른 시작, tool 요약. 상세는 링크로 넘긴다 |
+| `docs/getting-started.md` | 운영자 | 설치, tunnel 연결, 업그레이드, 여러 repo, container, 문제 해결 |
+| `docs/reference.md` | 운영자, client 작성자 | tool 인자, error code, 환경 변수, CLI |
+| `docs/security.md` | 운영자, 리뷰어 | 방어 계층, Git hardening, client 승인 |
+| `docs/hosted-verification.md` | 개발자 | ChatGPT UI(hosted) 경로로 미출시 기능을 확인하는 수동 절차 |
+| `AGENTS.md` | 개발자, coding agent | 명령, 불변식, 테스트 규칙, 릴리즈, 구조 |
+
+- tool, error code, env를 추가하거나 바꾸면 `docs/reference.md`를 고치고, README의 tool 요약 표와 특징이 여전히 맞는지 본다.
+- `docs/assets/`의 스크린샷은 가짜 demo fixture로 `pnpm build` 후 MCP Inspector를 띄워 찍는다. Inspector는 server command와 env를 화면에 보여 주므로, 경로가 드러나지 않게 wrapper script(예: PATH에 둔 `private-workspace-mcp` shim이 `WORKSPACE_ROOT`를 설정)로 띄운다. host 절대 경로나 사용자 이름이 보이는 이미지는 올리지 않는다.
+- README의 예시 응답도 같은 방식으로 실제 서버에서 받은 값을 쓴다.
 
 ## 명령
 
 toolchain은 `mise.toml`로 pin한다(Node 26, pnpm). shell에 mise가 활성화되어 있지 않으면 앞에 `mise exec --`를 붙인다.
 
 ```sh
+mise install                    # Node 26, pnpm
 pnpm install --frozen-lockfile
 pnpm typecheck      # tsc (TypeScript 7), noEmit
-pnpm test           # vitest: unit + stdio integration
-pnpm build          # tsc -p tsconfig.build.json -> dist/
-pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-client 필요)
+pnpm test           # vitest: unit + stdio integration (서버 process를 직접 spawn)
+pnpm build          # tsc -p tsconfig.build.json -> dist/index.js
+pnpm bundle         # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS
+pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-client 필요, OpenAI credential 불필요)
 ```
 
 작업 완료를 보고하기 전에 `pnpm typecheck`와 `pnpm test`를 실행한다. 서버 entry, transport, 종료 처리를 바꿨다면 `pnpm e2e:tunnel`까지 실행한다.
+
+- 로컬에서 tool을 직접 호출해 보려면 `npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.js`. 서버 환경 변수는 `-e`로 넘긴다.
+- `pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, `WORKSPACE_ROOTS`·`WORKSPACE_READ_WRITE` multi case, `WORKSPACE_GIT=read-only` repo의 Git tool 호출, tunnel-client 종료 시 child 정리를 확인한다.
+- `TEST_SERVER_ENTRY=release/index.mjs`를 주면 `test/stdio.test.ts`와 `pnpm e2e:tunnel`이 source 대신 bundle을 실행한다.
+- CI(`.github/workflows/ci.yml`)는 ubuntu, macOS, windows에서 typecheck, test, build를 실행하고, bundle로 stdio test를 한 번 더 돌린다.
+- ChatGPT UI(hosted) 경로 확인은 `docs/hosted-verification.md`의 수동 절차를 따른다.
 
 ## 보안 불변식
 
@@ -52,6 +76,35 @@ pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-clien
 - SDK client에서 version pin은 `versionNegotiation: { mode: { pin: '2026-07-28' } }` 형태다. `{ pin }`만 쓰면 조용히 무시되고 legacy로 연결된다.
 - `tunnel-client`는 child에 자기 환경 변수를 그대로 넘긴다. runtime key를 child에 넘기지 않으려면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
 - 로컬 `.env`(git ignore 대상)의 `TUNNEL_ID`는 `init --tunnel-id`로 profile에 넣고, `API_KEY`는 실행 시 `CONTROL_PLANE_API_KEY`로 넘긴다. `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어써서 profile이 여러 개일 때 tunnel이 섞인다. 값은 출력하지 않는다.
+
+## 릴리즈
+
+1. `package.json`의 `version`과 `src/server/server.ts`의 `SERVER_VERSION`을 올린다. 둘이 다르면 stdio test가 실패한다. `docs/getting-started.md` 설치 절의 `VERSION=`도 맞춘다.
+2. `main`에 commit하고 push한 뒤 CI가 통과하는지 본다.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z`. `.github/workflows/release.yml`이 tag와 `package.json` version이 같은지 확인하고, test와 bundle 뒤에 attestation을 만들어 GitHub Release에 `index.mjs`, `index.mjs.map`, `THIRD_PARTY_LICENSES.txt`, `SHA256SUMS`를 올린다.
+
+bundle은 minify하지 않는다. release된 파일을 그대로 읽고 감사할 수 있게 하기 위해서다.
+
+## 구조
+
+```text
+src/
+  index.ts                 stdio entry: config 로드, serveStdio, 종료 처리
+  cli.ts                   --check, --version 처리
+  server/server.ts         McpServer factory와 tool 등록
+  tools/                   tool 정의(schema, annotation)와 공통 runTool(timeout, error 변환, audit)
+  filesystem/              PathGuard, reader, lister, writer, editor, 검색(walker, glob, ignore 파일), revision
+  policy/deny-list.ts      민감 파일 deny pattern
+  git/                     Git read-only runner(hardened env·인자, process group), repository·config·rev 검사, status/diff/log/show (ADR-004)
+  config/config.ts         env 파싱과 검증
+  audit/audit-log.ts       stderr/file audit sink
+  errors/errors.ts         error code와 fs error 변환
+test/                      vitest (security case 중심, fixture는 임시 디렉터리)
+scripts/
+  bundle.ts                release bundle과 third-party license 수집
+  e2e-tunnel-client.ts     tunnel-client dev proxy 경유 e2e
+docs/                      사용자 문서, PRD, ADR, implementation notes
+```
 
 ## Git
 

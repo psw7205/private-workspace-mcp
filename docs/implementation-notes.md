@@ -166,6 +166,8 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 - TypeScript 7 기본값(`strict` true, `rootDir` `./`, `types` `[]`)에 맞춰 tsconfig에서 중복 옵션을 제거했다. `types: ["node"]`는 TS 7에서 기본값이 `[]`가 되어 명시가 필수다. `target`/`lib`는 7.x minor에서 기본값이 바뀌어도 build 출력이 흔들리지 않도록 `ES2025`로 명시한다.
 - ADR 7에 없는 `filesystem/directory-lister.ts`와 `tools/run-tool.ts`(timeout, error 변환, audit을 담당하는 공통 wrapper)를 추가한다.
 - (2026-09-25) ADR 파일을 `docs/adr/NNN-slug.md`로 모은다. `docs/adr.md`는 ADR-001만 담고 있어 `docs/adr/001-architecture.md`가 되고, `adr-002`·`adr-004`·`adr-008`도 같은 형식으로 옮긴다. ADR-001 §21과 PRD Phase 4 Amendment에 적힌 옛 경로는 결정 내용을 바꾸지 않는 경로 갱신이라 원문 불변 규칙의 예외로 새 경로로 고쳤다. 옮기기 전 경로는 `git log --follow`로 추적한다.
+- (2026-09-25) 사용자 문서를 나눈다. README는 소개·예시·빠른 시작·tool 요약만 두고, 운영 절차는 `docs/getting-started.md`, tool·error·env 전체는 `docs/reference.md`, 보안 모델은 `docs/security.md`, 개발·릴리즈·구조는 `AGENTS.md`로 옮긴다. 배치 규칙은 `AGENTS.md` "문서 배치"에 있다.
+- (2026-09-25) license는 Apache-2.0으로 정한다(`LICENSE`, `package.json` `license`). public repo에 license가 없어 쓸 권리가 없는 상태였고, 명시적 특허 조항이 있어 보안 도구를 조직에서 도입할 때 검토가 쉽다.
 
 ## 2. 설정
 
@@ -286,6 +288,6 @@ PRD 16의 Phase 2~11은 그대로 유지한다. shell, process execution은 구�
 - Phase 2·3에서 보류한 항목: line/range 교체, `write_file` 미리보기(edit dry run은 M49), 여러 파일에 걸친 bulk edit, 문자 class·escape가 있는 glob
 - 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
 - `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
-- README의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
+- `docs/getting-started.md`의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
 - `doctor` 첫 항목 후보: `--check`는 audit file과 부모 directory의 쓰기 권한을 확인하지 않는다(M47). 파일을 만들지 않는 `access(W_OK)` 검사로 보완할 수 있다
 - ChatGPT UI(hosted) 확인: `edit_file`·`find_files`·`search_text`·`multi_edit_file` 호출, `WORKSPACE_ROOTS` connector에서 model이 `workspace` 인자를 고르는지(ADR-008), `WORKSPACE_READ_WRITE`로 mode를 섞었을 때 description을 보고 쓰기 가능한 workspace를 고르는지(M38). 절차는 [`hosted-verification.md`](hosted-verification.md), 결과는 6절에 기록

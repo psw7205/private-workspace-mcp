@@ -8,18 +8,18 @@
 | `WORKSPACE_ROOTS`의 `workspace` 인자를 model이 고르는지 | ADR-008, notes 7절 |
 | `WORKSPACE_READ_WRITE`로 섞인 mode를 model이 description으로 구분하는지 | ADR-008 2.2절 Amendment, M38 |
 | (선택) Responses API 경로의 `tools/call` | notes 6절 "미검증" |
-| (선택) container child를 `tunnel-client` 경유로 실행 | README "OpenAI Secure MCP Tunnel 연결", notes 7절 |
+| (선택) container child를 `tunnel-client` 경유로 실행 | [getting-started "container로 격리하기"](getting-started.md#container로-격리하기), notes 7절 |
 | (선택) `WORKSPACE_GIT=read-only` Git tool 호출 | ADR-004, notes 7절 (부록 C) |
 
 아래 `<repo-root>`는 이 repo checkout, `<fixture>`는 검증용 임시 directory의 절대 경로다.
 
 ## 0. 준비
 
-- README "OpenAI Secure MCP Tunnel 연결"대로 tunnel, `.env`(`TUNNEL_ID`, `API_KEY`), ChatGPT connector(Developer mode, Tunnel, 인증 없음)가 이미 있다고 가정한다. connector는 `tunnel_id`에 묶이므로 새로 만들지 않는다.
+- [`getting-started.md`](getting-started.md) 3~5절을 따라 tunnel, `.env`(`TUNNEL_ID`, `API_KEY`), ChatGPT connector(Developer mode, Tunnel, 인증 없음)가 이미 있다고 가정한다. connector는 `tunnel_id`에 묶이므로 새로 만들지 않는다.
 - 검증 대상 기능은 `v0.1.0` release에 없다. `<repo-root>`에서 검증할 `main` commit을 checkout하고 `pnpm install --frozen-lockfile && pnpm build`로 `dist/index.js`를 만든다. commit hash를 기록해 둔다.
 - tunnel 하나에는 `tunnel-client` instance 하나만 띄운다. 평소 쓰는 `tunnel-client run`이 떠 있으면 먼저 멈춘다.
 - 같은 `tunnel-client`에 2025-era(legacy) client를 붙이지 않는다. child가 legacy로 pin되면 이후 ChatGPT 요청이 실패한다(notes 4절).
-- ChatGPT의 write tool 호출 확인은 켠 채로 둔다(README "보안 모델").
+- ChatGPT의 write tool 호출 확인은 켠 채로 둔다([`security.md`](security.md#prompt-injection과-client-승인)).
 
 ## 1. Fixture 만들기
 
@@ -46,7 +46,7 @@ printf '# Plan\n\nstatus: draft\nowner: TBD\nTODO: a\nTODO: b\n' > "$F/web/docs/
 
 ## 2. 검증용 profile로 daemon 띄우기
 
-평소 profile은 건드리지 않고 같은 tunnel ID로 검증용 profile을 하나 더 만든다. `init`과 `run` 절차는 README와 같고 `--profile`과 `--mcp-command`만 다르다.
+평소 profile은 건드리지 않고 같은 tunnel ID로 검증용 profile을 하나 더 만든다. `init`과 `run` 절차는 [`getting-started.md`](getting-started.md#3-tunnel-profile-만들기)와 같고 `--profile`과 `--mcp-command`만 다르다.
 
 ```sh
 set -a && . ./.env && set +a
@@ -56,16 +56,16 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp-verif
 ```
 
 - `WORKSPACE_MODE`는 넣지 않는다. `WORKSPACE_READ_WRITE`와 함께 주면 값과 상관없이 startup이 거부된다(M37).
-- 실행은 README의 `run` 블록에서 `--profile workspace-mcp-verify`로 바꿔 쓴다. `doctor`가 `RESULT ok`이고 `http://127.0.0.1:8080/readyz`가 ready인지 본다.
+- 실행은 [`getting-started.md`](getting-started.md#4-daemon-실행)의 `run` 블록에서 `--profile workspace-mcp-verify`로 바꿔 쓴다. `doctor`가 `RESULT ok`이고 `http://127.0.0.1:8080/readyz`가 ready인지 본다.
 - startup이 실패하면 `tunnel-client` 로그에 stderr 이유가 남는다.
 
-선택: hosted로 가기 전에 같은 env로 MCP Inspector를 띄워 schema를 미리 볼 수 있다(README "Quick start"). Inspector는 `tunnel-client`와 별개 process라 era pin에 영향을 주지 않는다.
+선택: hosted로 가기 전에 같은 env로 MCP Inspector를 띄워 schema를 미리 볼 수 있다([`getting-started.md`](getting-started.md#먼저-로컬에서-써-보기)). Inspector는 `tunnel-client`와 별개 process라 era pin에 영향을 주지 않는다.
 
 ## 3. ChatGPT UI 확인
 
 각 단계는 새 대화 하나에서 이어서 진행한다. 프롬프트는 예시이고, 기대 결과는 tool 결과 본문 기준이다. 오류는 `{"error":{"code":"…","message":"…"}}` 형태이며 message에 host 절대 경로(`<fixture>` 등)가 없어야 한다.
 
-1. **connector Refresh**: https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른 뒤 새 대화를 시작한다(README "OpenAI Secure MCP Tunnel 연결"의 반영 순서).
+1. **connector Refresh**: https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른 뒤 새 대화를 시작한다([`getting-started.md`](getting-started.md#업그레이드와-rollback)의 반영 순서).
    - 기대: tool 8개(`get_workspace_info`, `list_directory`, `read_file`, `write_file`, `edit_file`, `multi_edit_file`, `find_files`, `search_text`). UI에 schema가 보이면 `get_workspace_info`를 뺀 7개에 필수 인자 `workspace`(enum `api`, `web`)가 있는지 본다. 보이지 않으면 3~7단계의 인자로 대신 확인한다.
 2. **`get_workspace_info`**: "private workspace connector의 `get_workspace_info`를 호출하고 결과 JSON을 그대로 보여줘."
    - 기대: `workspaces: [{ name: "api", mode: "read-only" }, { name: "web", mode: "read-write" }]`, `platform`, `limits`. top-level `mode`가 없고 host 경로가 없다.
@@ -139,7 +139,7 @@ curl -s https://api.openai.com/v1/responses \
 
 ## 부록 B. (선택) container child를 `tunnel-client` 경유로
 
-README의 container `--mcp-command` 예시를 검증용 profile에 넣고 2~4절을 반복한다. `WORKSPACE_ROOTS`면 repo마다 `-v <fixture>/api:/workspaces/api` 식으로 mount하고 `-e WORKSPACE_ROOTS=api=/workspaces/api,web=/workspaces/web -e WORKSPACE_READ_WRITE=web`을 준다. 추가로 `tunnel-client run`을 멈춘 뒤 `docker ps`에 container가 남지 않는지 확인한다.
+[`getting-started.md`](getting-started.md#container로-격리하기)의 container `--mcp-command` 예시를 검증용 profile에 넣고 2~4절을 반복한다. `WORKSPACE_ROOTS`면 repo마다 `-v <fixture>/api:/workspaces/api` 식으로 mount하고 `-e WORKSPACE_ROOTS=api=/workspaces/api,web=/workspaces/web -e WORKSPACE_READ_WRITE=web`을 준다. 추가로 `tunnel-client run`을 멈춘 뒤 `docker ps`에 container가 남지 않는지 확인한다.
 
 ## 부록 C. (선택) read-only Git tool (ADR-004)
 
