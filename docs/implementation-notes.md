@@ -165,6 +165,7 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다(M39 이후 workspace마다 `Workspace.mode` 하나). 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
 - TypeScript 7 기본값(`strict` true, `rootDir` `./`, `types` `[]`)에 맞춰 tsconfig에서 중복 옵션을 제거했다. `types: ["node"]`는 TS 7에서 기본값이 `[]`가 되어 명시가 필수다. `target`/`lib`는 7.x minor에서 기본값이 바뀌어도 build 출력이 흔들리지 않도록 `ES2025`로 명시한다.
 - ADR 7에 없는 `filesystem/directory-lister.ts`와 `tools/run-tool.ts`(timeout, error 변환, audit을 담당하는 공통 wrapper)를 추가한다.
+- (2026-09-25) ADR 파일을 `docs/adr/NNN-slug.md`로 모은다. `docs/adr.md`는 ADR-001만 담고 있어 `docs/adr/001-architecture.md`가 되고, `adr-002`·`adr-004`·`adr-008`도 같은 형식으로 옮긴다. ADR-001 §21과 PRD Phase 4 Amendment에 적힌 옛 경로는 결정 내용을 바꾸지 않는 경로 갱신이라 원문 불변 규칙의 예외로 새 경로로 고쳤다. 옮기기 전 경로는 `git log --follow`로 추적한다.
 
 ## 2. 설정
 

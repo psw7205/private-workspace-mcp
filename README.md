@@ -14,9 +14,9 @@ OpenAI Secure MCP Tunnel ◀── outbound HTTPS ── tunnel-client
 
 이 서버는 coding agent가 아니라 capability provider다. shell과 임의 process 실행은 제공하지 않는다(PRD 4, ADR-001 §15). Git은 운영자가 `WORKSPACE_GIT=read-only`로 켰을 때만 read-only typed tool 4개로 제공한다(ADR-004).
 
-- 요구사항과 설계: [`docs/prd.md`](docs/prd.md), [`docs/adr.md`](docs/adr.md)
+- 요구사항과 설계: [`docs/prd.md`](docs/prd.md), [`docs/adr/`](docs/adr/)
 - 문서에 없던 결정, 잔여 위험, 검증 결과, TODO: [`docs/implementation-notes.md`](docs/implementation-notes.md)
-- 바뀐 결정 찾기: PRD·ADR 원문은 두고 해당 절에 `Amendment (날짜)`를 덧붙인다(`grep -n "Amendment (" docs/*.md`). 새 결정은 `docs/adr-NNN-*.md`, 세부 결정은 implementation notes의 M 표, 변경 이유는 `git log -- docs/`
+- 바뀐 결정 찾기: PRD·ADR 원문은 두고 해당 절에 `Amendment (날짜)`를 덧붙인다(`grep -rn "Amendment (" docs`). 새 결정은 `docs/adr/NNN-*.md`, 세부 결정은 implementation notes의 M 표, 변경 이유는 `git log -- docs/`
 - agent 작업 규칙: [`AGENTS.md`](AGENTS.md)
 
 ## Quick start

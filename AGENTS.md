@@ -4,7 +4,7 @@
 
 ## 먼저 읽을 것
 
-- `docs/prd.md`, `docs/adr.md`: 범위와 아키텍처 결정의 출발점. 고도화하며 필요하면 Amendment나 새 ADR로 바꾼다.
+- `docs/prd.md`, `docs/adr/001-architecture.md`: 범위와 아키텍처 결정의 출발점. 고도화하며 필요하면 Amendment나 새 ADR로 바꾼다.
 - `docs/implementation-notes.md`: 문서에 없던 결정(C/M 번호), 잔여 위험, 알려진 제약, 검증 결과, TODO.
 - 문서에서 결정되지 않은 중요한 사항은 임의로 확장하지 말고 가장 단순하고 보수적인 쪽을 택한다. 택한 결정은 `docs/implementation-notes.md`에 기록한다.
 - ADR 원문은 고치지 않는다. 결정이 바뀌면 해당 절에 `Amendment (날짜)`를 추가한다.
