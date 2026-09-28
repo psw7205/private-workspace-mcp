@@ -215,6 +215,7 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 
 - **TOCTOU**: 경로 검증과 실제 open 사이에 로컬 프로세스가 중간 directory를 symlink로 바꾸면 우회할 수 있다. Node에는 `openat2(RESOLVE_BENEATH)`가 없다. 마지막 component는 `O_NOFOLLOW`로 open해 줄이지만, 최종 경계는 ADR 11대로 OS 권한이다.
 - **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
+- **기존 파일 교체 시 metadata**: temp file + rename은 새 inode를 만들므로 owner/group, xattr(macOS extended attribute 포함), ACL, SELinux label은 보존되지 않는다. 새 파일은 서버 process의 uid와 OS 규칙에 따른 group을 갖는다. 원래 파일에서 가져오는 것은 permission bit(`mode & 0o7777`)뿐이고, temp file을 그 mode로 만든 뒤 rename 직전에 `chmod`로 다시 맞춘다(`file-writer.ts`).
 - **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
 - **timeout 직후 commit**: write는 `link()`/`rename()` 직전에 abort를 확인하지만(M43), 그 검사 뒤 timeout이 나거나 syscall이 이미 진행 중이면 client가 `TIMEOUT`을 받은 뒤에도 쓰기가 끝날 수 있다. `TIMEOUT` message대로 재조회로 결과를 확인해야 한다.
 - **abort된 새 파일 write의 빈 directory**: lock 획득 직후 검사와 commit 직전 검사 사이에 abort되면, 중첩 경로의 새 파일 write가 `createMissingDirectories`로 만든 부모 directory는 빈 채로 남는다. `REVISION_CONFLICT`(concurrent create의 `EEXIST`) 등 기존 실패 경로와 같은 동작이며 파일 내용은 쓰지 않는다.
