@@ -34,7 +34,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 
 `WORKSPACE_GIT=read-only`면 다음 4개가 추가된다(ADR-004). 모두 `readOnlyHint: true`, `destructiveHint: false`이고 `WORKSPACE_MODE`와 무관하게 동작한다.
 
-- workspace root가 repository toplevel이고 `<root>/.git`이 실제 directory일 때만 동작한다. 하위 directory·gitfile(linked worktree, submodule)·symlink `.git`은 `NOT_A_REPOSITORY`다.
+- workspace root가 repository toplevel이고 `<root>/.git`이 실제 directory일 때만 동작한다. 하위 directory·gitfile(linked worktree, submodule)·symlink `.git`은 `NOT_A_REPOSITORY`다. `objects/info/alternates`·`http-alternates`가 있거나(`git clone --reference`·`--shared`) `.git/objects`가 symlink인 repo도 `NOT_A_REPOSITORY`다.
 - rev는 `HEAD`, commit id(hex 4~64자), branch·tag·remote-tracking branch 이름에 `~N`·`^N`만 붙일 수 있다. range, reflog(`@{…}`), `rev:path`, `stash`, notes는 `INVALID_REVISION`이다.
 
 | tool | 설명 |

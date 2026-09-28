@@ -20,7 +20,7 @@
 - system `git`을 shell 없이 startup에 고정한 절대 경로로 실행한다(workspace 안의 `git`은 쓰지 않음).
 - child env는 상속하지 않고 새로 만들어 `CONTROL_PLANE_API_KEY`, `GIT_*`, `SSH_*`, `HOME`이 가지 않는다.
 - system·global config, pager, hooks, fsmonitor, filter, textconv, external diff, 서명 검증, network(lazy fetch 포함), replace ref를 인자·env로 끄고, worktree `.gitattributes` 대신 HEAD의 것만 읽는다. index를 다시 쓰는 명령은 쓰지 않는다.
-- 호출마다 repository 경계와 repo config를 확인하고, model이 쓸 수 있는 파일을 config로 끌어오면 `UNSAFE_GIT_CONFIG`로 거부한다.
+- 호출마다 repository 경계와 repo config를 확인한다. alternates(`objects/info/alternates`, `http-alternates`)가 있거나 `.git/objects`가 symlink인 repo는 root 밖 object store를 읽을 수 있어 `NOT_A_REPOSITORY`로 거부한다. repo config가 model이 쓸 수 있는 파일을 끌어오면 `UNSAFE_GIT_CONFIG`로 거부한다.
 - rev는 hex OID로 바꾼 뒤에만 넘겨 option injection이 구조적으로 막힌다.
 - deny 목록은 pathspec exclude와 파일 목록 검사 두 겹으로 적용한다.
 - timeout·출력 상한·서버 종료 때 git process group 전체를 끝낸다(POSIX).

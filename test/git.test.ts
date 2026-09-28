@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -454,11 +454,12 @@ describe('repository boundary (ADR-004 §2.4)', () => {
     await other.cleanup();
   });
 
-  const expectNotARepository = async (ctx: GitContext) => {
+  const expectNotARepository = async (ctx: GitContext, detail?: string) => {
     for (const [, call] of allCalls(ctx)) {
       const error = await expectWorkspaceError(call(), 'NOT_A_REPOSITORY');
       expectNoHostPath(error.message, fixture);
       expectNoHostPath(error.message, other);
+      if (detail !== undefined) expect(error.detail).toBe(detail);
     }
   };
 
@@ -498,6 +499,30 @@ describe('repository boundary (ADR-004 §2.4)', () => {
     await initRepository(fixture);
     await writeFile(path.join(fixture.root, '.git', 'commondir'), `${path.join(other.realRoot, '.git')}\n`);
     await expectNotARepository(contextFor(fixture));
+  });
+
+  // Alternates add object stores that git reads, and they can sit outside every root (M70).
+  it.each<[string, (info: string) => Promise<void>]>([
+    ['alternates pointing at another repository', (info) => writeFile(path.join(info, 'alternates'), `${path.join(other.realRoot, '.git', 'objects')}\n`)],
+    ['an empty alternates file', (info) => writeFile(path.join(info, 'alternates'), '')],
+    ['http-alternates', (info) => writeFile(path.join(info, 'http-alternates'), 'https://example.invalid/objects\n')],
+    ['an alternates directory', async (info) => void (await mkdir(path.join(info, 'alternates')))],
+    ['an alternates symlink', (info) => symlink(path.join(other.realRoot, '.git', 'objects'), path.join(info, 'alternates'), 'dir')],
+    ['a dangling alternates symlink', (info) => symlink(path.join(fixture.outside, 'missing'), path.join(info, 'alternates'), 'dir')],
+  ])('rejects %s', async (_name, arrange) => {
+    await initRepository(fixture);
+    const info = path.join(fixture.root, '.git', 'objects', 'info');
+    await mkdir(info, { recursive: true });
+    await arrange(info);
+    await expectNotARepository(contextFor(fixture), 'alternates');
+  });
+
+  it('rejects a .git/objects symlink, even to a complete object store', async () => {
+    await initRepository(fixture);
+    const moved = path.join(fixture.outside, 'objects');
+    await rename(path.join(fixture.root, '.git', 'objects'), moved);
+    await symlink(moved, path.join(fixture.root, '.git', 'objects'), 'dir');
+    await expectNotARepository(contextFor(fixture), 'objects');
   });
 
   it('requires the .git owner to be the server uid on POSIX', () => {

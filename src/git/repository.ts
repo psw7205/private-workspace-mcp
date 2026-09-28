@@ -112,6 +112,18 @@ export class GitSession {
     if (process.platform !== 'win32' && uid !== undefined && !isOwnedBy(info.uid, uid)) {
       throw new WorkspaceError('NOT_A_REPOSITORY', NOT_A_REPOSITORY_MESSAGE, 'owner');
     }
+    // The object store must be this .git's own directory: git follows a symlinked `objects` and
+    // reads every store an alternates file names, which may lie outside every root (M70).
+    const objects = path.join(gitDir, 'objects');
+    const objectsInfo = await lstat(objects).catch(() => undefined);
+    if (objectsInfo === undefined || !objectsInfo.isDirectory()) {
+      throw new WorkspaceError('NOT_A_REPOSITORY', NOT_A_REPOSITORY_MESSAGE, 'objects');
+    }
+    for (const name of ['alternates', 'http-alternates']) {
+      if (!(await isAbsent(path.join(objects, 'info', name)))) {
+        throw new WorkspaceError('NOT_A_REPOSITORY', NOT_A_REPOSITORY_MESSAGE, 'alternates');
+      }
+    }
 
     const result = await this.runInternal(['rev-parse', '--git-dir', '--git-common-dir', '--show-toplevel']);
     const lines = result.stdout.toString('utf8').split('\n');
@@ -125,6 +137,16 @@ export class GitSession {
         throw new WorkspaceError('NOT_A_REPOSITORY', NOT_A_REPOSITORY_MESSAGE);
       }
     }
+  }
+}
+
+/** True only when nothing exists at `file`; any other lstat outcome, errors included, fails closed. */
+async function isAbsent(file: string): Promise<boolean> {
+  try {
+    await lstat(file);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT';
   }
 }
 
