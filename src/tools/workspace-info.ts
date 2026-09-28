@@ -17,20 +17,24 @@ const sharedOutput = {
   }),
   /** Whether the read-only Git tools are registered (ADR-004 §2.9). */
   git: z.boolean(),
+  /** The running server's version, so a model can tell which release is deployed. */
+  server_version: z.string(),
 };
 
 const singleOutputSchema = z.object({ name: z.string(), root: z.literal('.'), mode: modeSchema, ...sharedOutput });
 // No top-level mode in multi mode: with mixed modes no single value is true (ADR-008 Amendment).
 const multiOutputSchema = z.object({ workspaces: z.array(z.object({ name: z.string(), mode: modeSchema })), ...sharedOutput });
 
-export function registerWorkspaceInfo(server: McpServer, { config, audit }: ToolDeps): void {
+/** `serverVersion` is passed in because `server.ts`, which owns `SERVER_VERSION`, imports this module. */
+export function registerWorkspaceInfo(server: McpServer, { config, audit }: ToolDeps, serverVersion: string): void {
+  const versionNote = '`server_version` is the running server\'s version.';
   const description = config.multi
     ? 'Describe the workspaces this server exposes: their names, each one\'s access mode (read-only or read-write), platform, and limits. ' +
       'Pass a name as `workspace` to the other tools; their paths are relative to that workspace root ".". Host paths are never revealed. ' +
-      '`git` tells whether the read-only Git tools are available.'
+      `\`git\` tells whether the read-only Git tools are available. ${versionNote}`
     : 'Describe the workspace this server exposes: its name, access mode (read-only or read-write), platform, and limits. ' +
       'All tool paths are relative to the workspace root ".". The host path is never revealed. ' +
-      '`git` tells whether the read-only Git tools are available.';
+      `\`git\` tells whether the read-only Git tools are available. ${versionNote}`;
   const shared = {
     platform: process.platform,
     limits: {
@@ -42,6 +46,7 @@ export function registerWorkspaceInfo(server: McpServer, { config, audit }: Tool
       max_search_files: config.limits.maxSearchFiles,
     },
     git: config.git,
+    server_version: serverVersion,
   };
   const single = config.workspaces[0];
   const result = config.multi

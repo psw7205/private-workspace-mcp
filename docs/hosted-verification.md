@@ -68,7 +68,7 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp-verif
 1. **connector Refresh**: https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른 뒤 새 대화를 시작한다([`getting-started.md`](getting-started.md#업그레이드와-rollback)의 반영 순서).
    - 기대: tool 8개(`get_workspace_info`, `list_directory`, `read_file`, `write_file`, `edit_file`, `multi_edit_file`, `find_files`, `search_text`). UI에 schema가 보이면 `get_workspace_info`를 뺀 7개에 필수 인자 `workspace`(enum `api`, `web`)가 있는지 본다. 보이지 않으면 3~7단계의 인자로 대신 확인한다.
 2. **`get_workspace_info`**: "private workspace connector의 `get_workspace_info`를 호출하고 결과 JSON을 그대로 보여줘."
-   - 기대: `workspaces: [{ name: "api", mode: "read-only" }, { name: "web", mode: "read-write" }]`, `platform`, `limits`. top-level `mode`가 없고 host 경로가 없다.
+   - 기대: `workspaces: [{ name: "api", mode: "read-only" }, { name: "web", mode: "read-write" }]`, `platform`, `limits`, `server_version`(배포한 `package.json` version과 같음). top-level `mode`가 없고 host 경로가 없다.
 3. **`list_directory`**: "api workspace의 최상위 목록을 보여줘."
    - 기대: `workspace: "api"`로 호출. `.gitignore`, `debug.log`, `src`가 보이고 `.env`는 목록에 없다(M4). `list_directory`는 ignore 파일을 적용하지 않으므로 `debug.log`는 보인다(M23).
 4. **deny**: "api workspace의 `.env`를 읽어줘."

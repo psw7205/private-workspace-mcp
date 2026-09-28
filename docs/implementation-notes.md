@@ -160,6 +160,12 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 |---|------|------|------|
 | M64 | `*`와 line terminator | deny pattern을 regex로 바꿀 때 `s`(dotAll) flag를 더해 `*`가 `\n`·`\r`·` `·` `를 포함한 모든 문자와 match하게 한다(`createDenyMatcher`). `^`·`$`는 `m` flag가 없어 원래 segment 전체에 고정되므로 바꾸지 않는다. `*`가 없는 literal pattern은 계속 segment 전체와 정확히 같아야 하므로 `.env\n`은 `.env2`처럼 다른 이름으로 보고 막지 않는다 | 이전에는 `*`를 `.*`로 바꿨고 `.`는 line terminator와 match하지 않아 `secret\nx.txt`, `id_rsa\n`, `x\n.pem` 같은 host 파일 이름이 deny를 빠져나갔다. `list_directory`·`find_files`·`search_text`는 host 이름을 그대로 열거하므로 입력 검사와 무관하게 이름이 드러나고 `search_text`로 내용까지 읽혔다. 입력 경로는 `normalizeRelativePath`가 `\u0000-\u001f`·`\u007f`를 거부하지만 ` `·` `는 받아들이므로, `read_file("secret x.txt")`와 이런 이름을 가리키는 workspace 내부 symlink(canonical 경로 검사)로도 읽을 수 있었다. `\u0085`(NEL)는 JS `.`의 line terminator가 아니어서 원래 match했다 |
 
+### 1.2.15 `get_workspace_info`의 서버 version (2026-09-28)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M68 | `server_version` | `get_workspace_info`는 single·multi 모두 `git` 뒤에 `server_version: string`(`SERVER_VERSION`)을 항상 넣는다. `server.ts`가 tool 모듈을 import하므로 값은 `registerWorkspaceInfo`의 인자로 넘긴다(`registerGitTools`의 runner와 같은 방식) | `initialize`의 `serverInfo.version`은 client가 model에 보여 주지 않을 수 있어, model이 tool 호출만으로 배포된 version과 문서의 차이를 알 수 있게 한다. 추가만 하므로 기존 client는 영향이 없다 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다(M39 이후 workspace마다 `Workspace.mode` 하나). 파일이 필요해지면 Phase 8 policy engine에서 도입한다.

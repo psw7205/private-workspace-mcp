@@ -32,7 +32,7 @@ export function createServerFactory(config: Config, audit: AuditSink = stderrAud
   const deps = { config, workspaces, audit };
   return () => {
     const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-    registerWorkspaceInfo(server, deps);
+    registerWorkspaceInfo(server, deps, SERVER_VERSION);
     registerListDirectory(server, deps);
     registerReadFile(server, deps);
     registerWriteFile(server, deps);

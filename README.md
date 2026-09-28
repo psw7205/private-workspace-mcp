@@ -109,7 +109,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 
 | tool | 하는 일 | 쓰기 |
 |------|---------|:----:|
-| `get_workspace_info` | workspace 이름, mode, limit | |
+| `get_workspace_info` | workspace 이름, mode, limit, 서버 version | |
 | `list_directory` | directory 목록(depth 지정) | |
 | `read_file` | UTF-8 파일 읽기(line pagination), `revision` 반환 | |
 | `find_files` | glob으로 파일 찾기(`.gitignore` 존중) | |

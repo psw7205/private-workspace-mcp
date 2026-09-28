@@ -216,8 +216,10 @@ describe('stdio server', () => {
         platform: process.platform,
         limits: { max_read_bytes: 1_048_576, max_depth: 2 },
       });
-      expect(Object.keys(info)).toEqual(['name', 'root', 'mode', 'platform', 'limits', 'git']);
+      expect(Object.keys(info)).toEqual(['name', 'root', 'mode', 'platform', 'limits', 'git', 'server_version']);
       expect(info.git).toBe(false);
+      const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };
+      expect(info.server_version).toBe(pkg.version);
       expectNoHostPath(JSON.stringify(result), fixture);
     });
 
@@ -407,6 +409,7 @@ describe('stdio server', () => {
       ]);
       expect(info).not.toHaveProperty('root');
       expect(info).not.toHaveProperty('mode');
+      expect(info.server_version).toEqual(expect.any(String));
       expectNoHostPath(JSON.stringify(result), fixture);
       expectNoHostPath(JSON.stringify(result), other);
     });
