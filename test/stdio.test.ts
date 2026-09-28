@@ -597,6 +597,27 @@ describe('stdio server', () => {
       for (const target of [repo, plain]) expectNoHostPath(JSON.stringify(result), target);
     };
 
+    it('declares every behavior hint explicitly, with destructiveHint false on read tools', async () => {
+      // MCP defaults destructiveHint to true when omitted, so read tools must say false.
+      const readTools = ['get_workspace_info', 'list_directory', 'read_file', 'find_files', 'search_text', ...gitTools];
+      const session = await connect({ WORKSPACE_ROOT: repo.root, WORKSPACE_GIT: 'read-only' });
+      try {
+        const { tools } = await session.client.listTools();
+        expect(tools).toHaveLength(12);
+        for (const tool of tools) {
+          for (const hint of ['readOnlyHint', 'destructiveHint', 'openWorldHint'] as const) {
+            expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe('boolean');
+          }
+        }
+        for (const name of readTools) {
+          const tool = tools.find((candidate) => candidate.name === name);
+          expect(tool?.annotations, name).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false });
+        }
+      } finally {
+        await session.client.close();
+      }
+    });
+
     it('registers the four tools with read-only hints and reports git in get_workspace_info', async () => {
       const session = await connect({ WORKSPACE_ROOT: repo.root, WORKSPACE_GIT: 'read-only' }, { mode: { pin: '2026-07-28' } });
       try {

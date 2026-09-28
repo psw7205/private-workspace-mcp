@@ -59,7 +59,7 @@ export function registerWorkspaceInfo(server: McpServer, { config, audit }: Tool
       title: 'Get workspace info',
       description,
       outputSchema: config.multi ? multiOutputSchema : singleOutputSchema,
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async (ctx) =>
       runTool({ tool: 'get_workspace_info', requestId: ctx.mcpReq.id, timeoutMs: config.limits.requestTimeoutMs, audit }, async () => ({

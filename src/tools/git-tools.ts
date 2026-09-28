@@ -43,7 +43,7 @@ export function registerGitTools(server: McpServer, deps: ToolDeps, runner: GitR
       maxBytes: maxReadBytes,
     };
   };
-  const annotations = { readOnlyHint: true, openWorldHint: false };
+  const annotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   const cut = `Output beyond ${maxReadBytes} bytes per git command is cut and \`truncated\` is true.`;
 
   server.registerTool(

@@ -46,7 +46,7 @@ export function registerListDirectory(server: McpServer, deps: ToolDeps): void {
           .describe(`Maximum number of entries to return (max ${maxDirectoryEntries})`),
       }),
       outputSchema,
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ workspace, path, depth, limit }, ctx) =>
       runTool({ tool: 'list_directory', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => ({

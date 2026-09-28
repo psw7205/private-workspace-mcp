@@ -54,7 +54,7 @@ export function registerSearchText(server: McpServer, deps: ToolDeps): void {
           .describe(`Maximum number of matches to return (default ${defaultLimit}, max ${maxDirectoryEntries})`),
       }),
       outputSchema,
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ workspace, path, query, regex, glob, case_sensitive, include_ignored, limit }, ctx) =>
       runTool({ tool: 'search_text', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {

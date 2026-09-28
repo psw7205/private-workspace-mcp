@@ -166,6 +166,12 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 |---|------|------|------|
 | M68 | `server_version` | `get_workspace_info`는 single·multi 모두 `git` 뒤에 `server_version: string`(`SERVER_VERSION`)을 항상 넣는다. `server.ts`가 tool 모듈을 import하므로 값은 `registerWorkspaceInfo`의 인자로 넘긴다(`registerGitTools`의 runner와 같은 방식) | `initialize`의 `serverInfo.version`은 client가 model에 보여 주지 않을 수 있어, model이 tool 호출만으로 배포된 version과 문서의 차이를 알 수 있게 한다. 추가만 하므로 기존 client는 영향이 없다 |
 
+### 1.2.16 읽기 tool의 annotations (2026-09-28)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M69 | 읽기 tool의 `destructiveHint` | 읽기 tool 5개와 Git tool 4개는 `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false`를 모두 명시한다. 쓰기 tool은 그대로 | MCP spec은 `destructiveHint`를 생략하면 `true`로 해석하고 `readOnlyHint: true`일 때만 의미가 없다고 한다. client가 두 값을 따로 읽으면 읽기 tool이 파괴적으로 보일 수 있어 기본값에 기대지 않는다 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다(M39 이후 workspace마다 `Workspace.mode` 하나). 파일이 필요해지면 Phase 8 policy engine에서 도입한다.

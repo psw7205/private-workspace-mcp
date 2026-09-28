@@ -44,7 +44,7 @@ export function registerFindFiles(server: McpServer, deps: ToolDeps): void {
         include_ignored: z.boolean().default(false).describe('Also return files ignored by .gitignore or .ignore'),
       }),
       outputSchema,
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ workspace, path, pattern, limit, include_ignored }, ctx) =>
       runTool({ tool: 'find_files', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => ({

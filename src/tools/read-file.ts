@@ -40,7 +40,7 @@ export function registerReadFile(server: McpServer, deps: ToolDeps): void {
           .describe(`Maximum number of lines to return (default ${DEFAULT_MAX_LINES})`),
       }),
       outputSchema,
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ workspace, path, start_line, max_lines }, ctx) =>
       runTool({ tool: 'read_file', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async () => {

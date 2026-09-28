@@ -35,7 +35,7 @@ path 검증은 defense-in-depth다. 최종 보안 경계는 전용 OS 사용자�
 
 read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(prompt injection)가 `write_file`·`edit_file` 호출로 이어질 수 있다(`multi_edit_file`도 같다). revision 검사는 lost update를 막을 뿐 이 경로를 막지 않는다(model도 `read_file`로 revision을 얻는다).
 
-서버는 쓰기 tool 모두에 `readOnlyHint: false`, `destructiveHint: true`를 선언한다. annotations는 tool 단위라 `dry_run` 호출에도 같다. client 쪽 approval은 서버 권한 판단의 근거가 아닌 보조 방어로 쓴다(ADR-001 §14).
+서버는 쓰기 tool 모두에 `readOnlyHint: false`, `destructiveHint: true`를, 읽기 tool(Git tool 포함) 모두에 `readOnlyHint: true`, `destructiveHint: false`를 선언한다. annotations는 tool 단위라 `dry_run` 호출에도 같다. client 쪽 approval은 서버 권한 판단의 근거가 아닌 보조 방어로 쓴다(ADR-001 §14).
 
 - **Responses API**: `require_approval: {"never": {"tool_names": ["get_workspace_info", "list_directory", "read_file", "find_files", "search_text"]}}`로 읽기 tool만 자동 실행하고 나머지는 승인을 받는다. `WORKSPACE_GIT=read-only`면 `git_status`, `git_diff`, `git_log`, `git_show`도 읽기 tool이지만 history는 deny 이름으로 막지 못하는 과거 내용을 드러내므로, 자동 실행 목록에 넣을지는 따로 판단한다. 쓰기가 필요 없으면 `allowed_tools`로 읽기 tool만 노출하거나 서버를 read-only로 띄운다.
 - **ChatGPT**: write tool 호출 확인을 끄지 않는다.
