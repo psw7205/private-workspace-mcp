@@ -30,6 +30,8 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 
 쓰기 tool(`write_file`, `edit_file`, `multi_edit_file`)은 read-write workspace에서만 동작한다. 나머지는 mode와 무관하다.
 
+검색 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 경로(예: `node_modules/pkg`)를 `path`로 주면 상위 ignore 파일 전체를 적용하지 않으므로, 그 안의 `*.log` 같은 상위 규칙도 빠진다. 그 경로 아래의 ignore 파일은 그대로 적용된다.
+
 내용 검사(ADR-010): 파일 이름이 deny 목록에 없어도 내용에 알려진 형식의 credential(Anthropic·OpenAI·GitHub·GitLab·Slack·Tavily key, Google API key, AWS access key id, PEM·OpenSSH private key)이 있으면 deny 이름과 같게 다룬다. `read_file`, `edit_file`·`multi_edit_file`(`dry_run` 포함), 기존 파일을 교체하는 `write_file`은 `PATH_BLOCKED`를 받고, `search_text`는 그 파일을 건너뛴다. `list_directory`·`find_files`에는 그대로 보인다. binary·non-UTF-8·read limit 초과 파일과 새로 쓰는 content는 검사하지 않는다. `WORKSPACE_CONTENT_SCAN=off`로 끌 수 있다.
 
 ## Git tools (opt-in)
@@ -72,8 +74,8 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 
 | env | 기본값 | 설명 |
 |-----|--------|------|
-| `WORKSPACE_ROOT` | (이것 또는 `WORKSPACE_ROOTS` 필수) | 절대 경로. startup 시 realpath로 고정 |
-| `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,name2=/abs/path`. workspace 여러 개(ADR-008). 이름은 소문자·숫자·`-`·`_`(64자 이하), 각 항목은 첫 `=`에서 나누며 경로에 `,`는 쓸 수 없음. root끼리 겹치면 거부. `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓸 수 없음 |
+| `WORKSPACE_ROOT` | (이것 또는 `WORKSPACE_ROOTS` 필수) | 존재하는 directory의 절대 경로. startup 시 realpath로 고정. filesystem root, home directory, home의 상위는 거부 |
+| `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,name2=/abs/path`. workspace 여러 개(ADR-008). 각 root는 `WORKSPACE_ROOT`와 같은 검사를 받는다. 이름은 소문자·숫자·`-`·`_`(64자 이하), 각 항목은 첫 `=`에서 나누며 경로에 `,`는 쓸 수 없음. root끼리 겹치면 거부. `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓸 수 없음 |
 | `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write`. `WORKSPACE_ROOTS`에서 `WORKSPACE_READ_WRITE` 없이 쓰면 모든 workspace에 적용 |
 | `WORKSPACE_READ_WRITE` | (없음) | `WORKSPACE_ROOTS`에서 read-write로 둘 workspace 이름 목록(예: `api` 또는 `api,web`). 나열하지 않은 workspace는 read-only. 빈 값은 설정하지 않은 것과 같다. 값이 있을 때 `WORKSPACE_ROOT`나 `WORKSPACE_MODE`와 함께 주거나, 없는 이름·중복·빈 항목이 있으면 startup에서 거부 |
 | `WORKSPACE_NAME` | root basename | `get_workspace_info`의 `name` (`WORKSPACE_ROOT` 전용) |
@@ -81,7 +83,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | write content 최대 크기 (UTF-8 bytes) |
 | `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 응답 최대 entry 수 |
 | `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
-| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도) |
+| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도. 넘는 값은 `setTimeout`이 1 ms로 바꿔 모든 호출이 `TIMEOUT`이 되므로 거부) |
 | `WORKSPACE_MAX_SEARCH_FILES` | `10000` | `find_files`/`search_text` 한 번이 살펴보는 파일 수 상한 |
 | `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. 모든 workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
 | `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |

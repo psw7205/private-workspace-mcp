@@ -1,6 +1,8 @@
-# Implementation Notes — MVP
+# Implementation Notes
 
-PRD와 ADR-001을 기준으로 MVP를 구현하면서 문서에 결정되지 않았거나 서로 긴장 관계에 있는 항목을 어떻게 닫았는지 기록한다. 원칙은 "문서 범위를 넘기지 않고, 가장 단순하고 보수적인 선택"이다.
+PRD와 ADR에 결정되지 않았거나 서로 긴장 관계에 있는 항목을 구현하며 어떻게 닫았는지 기록한다. 원칙은 "문서 범위를 넘기지 않고, 가장 단순하고 보수적인 선택"이다. C/M 항목은 번호를 바꾸거나 지우지 않는다(`AGENTS.md` "먼저 읽을 것").
+
+2026-09-29에 설정 표, 잔여 위험, 검증 결과, TODO를 다른 문서로 옮겼다(1.3절). 아래 항목의 "3절"은 [`security.md` 알려진 한계](security.md#알려진-한계), "4절"과 "6절"은 [검증 기록](archive/verification-log.md), "7절"은 GitHub issue를 가리킨다.
 
 ## 1. PRD / ADR 검토 결과
 
@@ -195,6 +197,12 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 | M76 | `pnpm install:local` | source checkout을 release와 같은 구조로 설치한다. tracked 파일에 commit하지 않은 변경이 있으면 거부하고(untracked는 보지 않음), `typecheck`·`test`·`bundle` 뒤 `release/`를 `<install-dir>/v<version>-<commit>`에 복사한다. `<install-dir>`는 `PRIVATE_WORKSPACE_MCP_INSTALL_DIR` 또는 `~/.local/share/private-workspace-mcp`다. 복사는 임시 directory에 한 뒤 설치된 entry의 `--version`이 `package.json` version과 같을 때만 rename하고, `current`는 새 symlink를 rename해 바꾼다. 같은 이름이 이미 있으면 `SHA256SUMS`가 같을 때만 재사용한다. 오래된 설치는 지우지 않는다. `win32`는 거부한다 | release 설치 문서와 같은 `current` 구조라 rollback과 profile이 release와 같다. version만으로는 같은 version의 dev build끼리 구별되지 않아 directory 이름에 commit을 넣는다. `--version` 출력은 바꾸지 않는다. `ln -sfn`은 unlink 후 생성이라 `current`가 없는 순간이 생긴다. 서비스 재시작은 OS·설치마다 다르므로 script에 넣지 않고 문서에 둔다. Windows는 directory symlink 권한 문제가 있고 daemon 운영 예시도 없다 |
 | M77 | daemon 서비스 예시 | getting-started 4절에 launchd와 systemd user unit 예시를 둔다. runtime key는 profile의 `control_plane.api_key: "file:<key-file>"`(권한 `0600`)로 넘기고, 서비스 정의에는 `tunnel-client` 절대 경로와 `run --profile`만 둔다 | 서비스 환경에는 `.env`와 mise가 없다. key를 파일 참조로 넘기면 서비스 정의에 secret이 없고 child 환경에도 key가 없다. `tunnel-client` 0.0.14 `doctor`가 `file:` 참조를 `PASS configured`로 받는 것을 확인했다 |
 
+### 1.2.20 stdio protocol era (2026-09-23 결정, 2026-09-29 기록)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M78 | era pin 대응 | MCP SDK `serveStdio`의 기본 posture를 유지한다. stdio connection은 첫 요청의 era(2025 `initialize` 또는 `2026-07-28`)로 pin되고, era를 섞어 받는 routing이나 `legacy: 'reject'`는 도입하지 않는다. 같은 `tunnel-client`에 2025-era client가 먼저 붙어 legacy로 pin되면 `tunnel-client` 재시작으로 복구한다(getting-started "문제 해결") | OpenAI의 두 경로(Responses API, ChatGPT UI)가 모두 `2026-07-28`로 요청함을 관측했다(검증 기록의 era pin 절, `tunnel-client` 0.0.14). SDK에 stdio에서 era를 섞어 받는 옵션이 없다. `legacy: 'reject'`는 legacy pin을 원천 차단하지만 2025-era client 지원과 stdio legacy test를 함께 정리해야 해서 별도 결정으로 남긴다 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다(M39 이후 workspace마다 `Workspace.mode` 하나). 파일이 필요해지면 Phase 8 policy engine에서 도입한다.
@@ -203,131 +211,4 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 - (2026-09-25) ADR 파일을 `docs/adr/NNN-slug.md`로 모은다. `docs/adr.md`는 ADR-001만 담고 있어 `docs/adr/001-architecture.md`가 되고, `adr-002`·`adr-004`·`adr-008`도 같은 형식으로 옮긴다. ADR-001 §21과 PRD Phase 4 Amendment에 적힌 옛 경로는 결정 내용을 바꾸지 않는 경로 갱신이라 원문 불변 규칙의 예외로 새 경로로 고쳤다. 옮기기 전 경로는 `git log --follow`로 추적한다.
 - (2026-09-25) 사용자 문서를 나눈다. README는 소개·예시·빠른 시작·tool 요약만 두고, 운영 절차는 `docs/getting-started.md`, tool·error·env 전체는 `docs/reference.md`, 보안 모델은 `docs/security.md`, 개발·릴리즈·구조는 `AGENTS.md`로 옮긴다. 배치 규칙은 `AGENTS.md` "문서 배치"에 있다.
 - (2026-09-25) license는 Apache-2.0으로 정한다(`LICENSE`, `package.json` `license`). public repo에 license가 없어 쓸 권리가 없는 상태였고, 명시적 특허 조항이 있어 보안 도구를 조직에서 도입할 때 검토가 쉽다.
-
-## 2. 설정
-
-| env | 기본값 | 설명 |
-|-----|--------|------|
-| `WORKSPACE_ROOT` | (이것 또는 `WORKSPACE_ROOTS` 필수) | 절대 경로. 존재하는 directory여야 하며 startup 시 realpath로 고정. filesystem root, home, home의 상위는 거부(M27) |
-| `WORKSPACE_ROOTS` | (없음) | `name=/abs/path,...`. 각 root에 `WORKSPACE_ROOT`와 같은 검사, 겹침 거부(M32~M34). `WORKSPACE_ROOT`·`WORKSPACE_NAME`과 함께 쓰면 거부 |
-| `WORKSPACE_MODE` | `read-only` | `read-only` \| `read-write`. `WORKSPACE_ROOTS`에서 `WORKSPACE_READ_WRITE` 없이 쓰면 모든 workspace에 적용 |
-| `WORKSPACE_READ_WRITE` | (없음) | `WORKSPACE_ROOTS`에서 read-write로 둘 workspace 이름 목록(`,` 구분). 나머지는 read-only. `WORKSPACE_ROOT`·`WORKSPACE_MODE`와 함께 쓰거나 없는 이름·중복·빈 항목이 있으면 거부(M37) |
-| `WORKSPACE_NAME` | root basename | `get_workspace_info`에 노출되는 이름(`WORKSPACE_ROOT` 전용) |
-| `WORKSPACE_MAX_READ_BYTES` | `1048576` | 이 크기를 넘는 파일은 read 거부 |
-| `WORKSPACE_MAX_WRITE_BYTES` | `1048576` | UTF-8 기준 write content 최대 크기 |
-| `WORKSPACE_MAX_DIRECTORY_ENTRIES` | `1000` | `list_directory` 1회 응답의 최대 entry 수 |
-| `WORKSPACE_MAX_DEPTH` | `3` | `list_directory` 최대 depth |
-| `WORKSPACE_REQUEST_TIMEOUT_MS` | `10000` | tool call timeout. 최대 `2147483647`(Node timer 한도) |
-| `WORKSPACE_MAX_SEARCH_FILES` | `10000` | 검색 한 번이 순회 중 만나는 regular file 수 상한(M22) |
-| `WORKSPACE_AUDIT_LOG` | (없음 → stderr) | audit JSONL 파일 절대 경로. 모든 workspace 밖이어야 하며 symlink는 거부. 새로 만들 때 권한 `0600`(이미 있는 파일의 권한은 바꾸지 않음) |
-| `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
-| `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
-| `WORKSPACE_GIT` | (없음 → 꺼짐) | `read-only`면 Git tool 4개를 등록한다(ADR-004). 다른 값은 거부. 켜져 있는데 workspace 밖 `PATH`에 git이 없거나 2.3절 인자를 지원하지 않으면 startup 실패(M52) |
-| `WORKSPACE_CONTENT_SCAN` | `on` | `off`면 내용 기반 credential 차단을 끈다(ADR-010, M72). 다른 값은 거부 |
-
-같은 env로 `node <entry> --check`를 실행하면 서버를 띄우지 않고 이 검증만 한 뒤 해석된 설정을 stderr에 요약한다(M47).
-
-정수 설정은 모두 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다. 범위를 벗어나면 startup이 실패한다. timeout 상한이 따로 있는 이유는 `setTimeout`이 `2^31-1`보다 큰 값을 1 ms로 바꿔 모든 tool call이 `TIMEOUT`이 되기 때문이다.
-
-## 3. 잔여 위험 (MVP에서 수용)
-
-- **TOCTOU**: 경로 검증과 실제 open 사이에 로컬 프로세스가 중간 directory를 symlink로 바꾸면 우회할 수 있다. Node에는 `openat2(RESOLVE_BENEATH)`가 없다. 마지막 component는 `O_NOFOLLOW`로 open해 줄이지만, 최종 경계는 ADR 11대로 OS 권한이다.
-- **hard link**: workspace 안에 외부 파일로 향하는 hard link가 있으면 읽을 수 있다. 이런 link를 만들려면 이미 해당 파일 권한이 있어야 하므로 OS 권한 경계에 맡긴다. write는 rename 방식이라 link 대상 inode를 수정하지 않는다.
-- **기존 파일 교체 시 metadata**: temp file + rename은 새 inode를 만들므로 owner/group, xattr(macOS extended attribute 포함), ACL, SELinux label은 보존되지 않는다. 새 파일은 서버 process의 uid와 OS 규칙에 따른 group을 갖는다. 원래 파일에서 가져오는 것은 permission bit(`mode & 0o7777`)뿐이고, temp file을 그 mode로 만든 뒤 rename 직전에 `chmod`로 다시 맞춘다(`file-writer.ts`).
-- **revision check와 rename 사이의 사용자 편집**: 아주 짧은 window가 남는다. 동일 process 내 agent 요청끼리는 lock으로 막는다.
-- **timeout 직후 commit**: write는 `link()`/`rename()` 직전에 abort를 확인하지만(M43), 그 검사 뒤 timeout이 나거나 syscall이 이미 진행 중이면 client가 `TIMEOUT`을 받은 뒤에도 쓰기가 끝날 수 있다. `TIMEOUT` message대로 재조회로 결과를 확인해야 한다.
-- **abort된 새 파일 write의 빈 directory**: lock 획득 직후 검사와 commit 직전 검사 사이에 abort되면, 중첩 경로의 새 파일 write가 `createMissingDirectories`로 만든 부모 directory는 빈 채로 남는다. `REVISION_CONFLICT`(concurrent create의 `EEXIST`) 등 기존 실패 경로와 같은 동작이며 파일 내용은 쓰지 않는다.
-- **edit dry run의 동기 CPU 시간**: `multi_edit_file` dry run의 segment 추적은 O(edit 수 × segment 수)이고 동기로 돈다(M50). 최대 크기 파일에 짧은 `replace_all` 100개를 걸면 수 초 동안 event loop를 점유하고, 그동안 `runTool` timeout도 발화하지 못한다. 측정한 최악 사례(3.2초)는 기본 timeout 안이고 실제 edit의 `split`/`join`도 같은 성격의 비용(1.0초)이 있어, read limit과 `MAX_EDITS`로 상한을 두는 것으로 수용한다
-- **v0.1.0 license 고지 누락**: v0.1.0 Release의 `THIRD_PARTY_LICENSES.txt`에는 SDK dist에 미리 묶인 6개 package(M51)의 license가 없다. 해당 코드는 `index.mjs`에 들어 있다. 다음 release부터 포함되며, 이미 올라간 v0.1.0 asset은 attestation과 checksum을 깨지 않도록 바꾸지 않는다
-- **v0.1.0 deny의 줄바꿈 누락**: v0.1.0에서는 deny pattern의 `*`가 line terminator와 match하지 않아(M64), `secret\nx.txt`처럼 이름에 줄바꿈이 든 host 파일이 `list_directory`·`find_files`에 나오고 `search_text`로 내용이 읽혔다. ` `·` `가 든 이름과 그런 이름을 가리키는 symlink는 `read_file`로도 읽혔다. 다음 release(v0.2.0)부터 막힌다. deny는 보조 방어(PRD 9)이고, 노출되려면 그런 이름의 민감 파일이 host에 이미 있어야 한다
-- **Windows 실동작**: 경로 문법 방어는 OS와 무관하게 적용했다. 하지만 junction, 8.3 short name, case 처리 등 실제 Windows 동작은 로컬에 Windows host가 없어 검증하지 못했다. `.github/workflows/ci.yml`의 `windows-latest` job이 test suite를 실행한다. 첫 실행에서 오류 code 차이 1건이 나와 M28로 고쳤고, M28 반영 후 재실행에서 통과했다(6절).
-- **prompt injection을 통한 write**: read-write 모드에서 model이 읽은 파일에 심어진 지시가 `write_file`·`edit_file`·`multi_edit_file` 호출로 이어질 수 있다. revision은 model도 `read_file`로 얻으므로 방어가 아니다. 서버는 read-only 기본값과 `destructiveHint`만 제공하고, 승인은 client 설정(README)에 맡긴다. 피해 복구 수단(revision history, rollback)은 PRD Phase 2 범위다.
-- **regex 한 줄의 동기 비용**: `regex: true`의 줄 하나 matching은 끊을 수 없다. 상한(M46) 안에서 가장 무거운 패턴과 `WORKSPACE_MAX_READ_BYTES` 기본값(1 MiB)의 한 줄짜리 파일(minified 파일 등)이면 약 2~3초 동안 event loop가 막히고, 그동안 같은 stdio connection의 다른 요청도 기다린다. 비용은 read limit에 비례한다.
-- **Git: 열거하지 못한 config 실행 경로** (ADR-004 6절): 2.3절 인자·env는 알려진 실행 key를 끄는 denylist다. 이후 git version이 read 경로에 새 config 기반 program 실행을 넣으면 운영자 `.git/config`(root 밖 include 포함)의 그 값이 실행된다. startup option 확인은 이를 잡지 못한다. `--no-textconv`·`--no-ext-diff`는 plumbing(`diff-tree`·`diff-files`·`diff-index`)이 원래 textconv·external diff를 실행하지 않아 mutation test로 구별되지 않는다(6절). git을 올릴 때 ADR 목록과 함께 다시 본다.
-- **Git: history 노출**: 이름 기준 deny는 rename된 secret, deny에 없는 이름의 과거 파일, commit message·author를 막지 못한다. 알려진 OID로 HEAD history 밖 commit(stash의 untracked commit 등)을 직접 지정하는 것도 막지 않는다(OID를 알 수단은 주지 않음). tracked symlink target이나 파일 내용의 host 경로도 그대로 나간다(M63).
-- **Git: 고아 process와 object 경계**: 서버가 `SIGKILL`로 죽으면 git process group이 남을 수 있다. 쓰지 않고 도는 작업(큰 repo의 status scan)은 끝날 때까지 남는다. `objects/info/alternates`·`http-alternates`가 있거나 `.git/objects`가 symlink인 repo는 이제 `NOT_A_REPOSITORY`로 거부되어 root 밖 object store를 읽지 않는다(M70). `objects/pack`처럼 `objects` 아래 하위 directory의 symlink는 검사하지 않으며, 운영자가 쓴 `.git` 안에 있으므로 OS 권한 경계에 맡긴다.
-- **Git: ownership과 Windows**: 명시적 `GIT_DIR`에서 git 자체의 `safe.directory` 검사 여부는 unresolved(다른 uid repo로 확인하지 못함). Node uid 검사로 대신하지만 Windows에는 없다. Windows에는 process group이 없다. 서버는 launcher 대신 실제 `git.exe`를 실행해 kill 하나로 끝나게 했지만(M67), 이후 git version이 read 경로에서 child process를 띄우면 그 손자는 kill에 닿지 않는다(2.3절 hardening이 알려진 경로를 끔). null device 값(M52), `GIT~1` alias(M66)는 `windows-latest` CI로 해소했다.
-- **Git: 호출당 비용**: 호출마다 `rev-parse`와 `config --list`가 추가로 돌아 child가 3~6개 뜬다. process당 동시 실행 2개 제한 때문에 여러 요청이 몰리면 대기 시간이 timeout에 포함된다.
-- **내용 기반 차단의 한계** (ADR-010 6절): prefix가 없는 secret(비밀번호, DB connection string, AWS secret access key, 사내 token)과 형식을 바꾼 secret(base64, JSON escape, 줄바꿈으로 나뉜 key)은 막지 못한다. 차단 자체가 "이 파일에 credential 형식 값이 있다"는 1 bit를 드러낸다. 차단 파일도 listing에는 보인다(M4와 다름). 오탐을 우회할 수단은 서버 전체 kill switch뿐이다. Git tool 출력에는 적용하지 않는다(ADR-010 5절).
-- **child 환경 변수 상속**: `tunnel-client`의 환경(`CONTROL_PLANE_API_KEY` 포함)이 MCP child에 그대로 상속된다. 서버는 환경 변수를 어떤 tool로도 노출하지 않지만, 격리가 필요하면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
-
-## 4. 알려진 제약: stdio connection의 protocol era pin
-
-MCP TypeScript SDK v2의 `serveStdio`는 첫 opening 요청으로 connection의 era(2025 `initialize` 또는 `2026-07-28` stateless)를 정하고, 그 connection 동안 instance 하나를 유지한다. `tunnel-client`는 모든 caller를 stdio child 하나로 multiplex하므로 era가 섞이면 실패한다. `tunnel-client dev proxy`로 확인한 결과는 다음과 같다.
-
-| 같은 child에서의 요청 순서 | 결과 |
-|---------------------------|------|
-| modern → modern | 둘 다 성공 |
-| legacy → legacy | 둘 다 성공 |
-| legacy → modern | modern 실패: `server/discover` 미제공 |
-| modern → legacy | legacy 실패: `Unsupported protocol version: 2025-11-25` |
-
-SDK 문서(`protocol-versions`)에도 stdio에서는 era를 섞어 받는 옵션이 없다. MVP는 SDK 기본 posture를 유지한다.
-
-**hosted 관측 결과 (2026-09-23, `tunnel-client` 0.0.14):** Responses API의 `{"type":"mcp","tunnel_id":…}` 도구로 요청했을 때, OpenAI tunnel-service가 stdio child에 보낸 요청은 `2026-07-28` self-contained 형식이었다. 순서는 `server/discover`(id `openai-mcp-discover`) 다음 `tools/list`였고, 둘 다 `_meta`에 `io.modelcontextprotocol/protocolVersion`, `clientInfo`, `clientCapabilities`가 있었다. 서버는 두 요청에 모두 정상 응답했다. 이는 stdio `main` channel이 `stateless`를 선언하지 않는다는 tunnel-client 문서만 보고 legacy를 예상했던 앞선 판단과 다르다.
-
-운영 영향은 다음과 같다.
-
-- OpenAI 경로만 쓰면 child는 modern으로 pin되고 정상 동작한다.
-- 2025-era(legacy) client가 같은 tunnel-client의 child에 **먼저** 붙으면 child가 legacy로 pin되어 이후 OpenAI 요청이 실패한다. 이때는 `tunnel-client`를 재시작하면 복구된다.
-- `legacy: 'reject'`(modern 전용)는 채택하지 않았다. 채택 당시에는 ChatGPT UI connector의 era를 검증하지 못했기 때문이다.
-
-**ChatGPT UI 관측 결과 (2026-09-23, `tunnel-client` 0.0.14):** ChatGPT 웹 Developer mode에서 Secure MCP Tunnel connector를 만들었을 때 child에 온 요청은 `rpc_request_id` `openai-mcp-discover` 다음 `0`이었다. Responses API 경로와 같은 순서와 id이므로 ChatGPT UI도 `2026-07-28` modern era(`server/discover` → `tools/list`)로 요청한다고 본다. `tunnel-client` 로그에는 method 이름이 남지 않아 id 일치에 근거한 판단이다. 이로써 OpenAI의 두 경로(Responses API, ChatGPT UI)가 모두 modern이므로 legacy pin 위험은 같은 tunnel에 2025-era client를 따로 붙이는 경우로 한정된다. era routing은 도입하지 않는다.
-
-## 5. 구현 계획
-
-```text
-0. git init, baseline commit                  -> verify: git log
-1. scaffold (pnpm, tsconfig, vitest)          -> verify: pnpm typecheck, pnpm test
-2. security test 정의 (path-guard, deny, reader, writer, lister)
-                                              -> verify: 구현 전 red 확인
-3. errors / config / deny-list / path-guard   -> verify: 해당 test green
-4. revision / file-reader / directory-lister  -> verify: 해당 test green
-5. file-writer                                -> verify: 해당 test green
-6. tools + run-tool + audit + server + stdio entry
-                                              -> verify: stdio integration test (spawn, tools/list, call, stdin EOF 시 종료)
-7. tunnel-client dev proxy --mcp-command로 e2e -> verify: MCP client가 tunnel 경유로 tools/list, tools/call 성공, tunnel-client 종료 시 child 종료
-8. README, 결과 정리                           -> verify: 문서에 로컬 절대 경로 없음
-```
-
-## 6. 검증 결과
-
-- `pnpm test`: unit과 stdio integration을 합쳐 12 files, 345 tests 통과. 커버 범위는 audit 파일 출력과 rotation, 추가 deny pattern, path traversal, 절대/drive/UNC 경로, Windows alias, symlink escape(file/dir/parent/dangling/re-enter), deny 입력·canonical 양쪽, FIFO, binary와 non-UTF-8, 크기 제한, read limit을 넘는 파일 overwrite 거부, 정수 설정 상한, containment 경계(sibling prefix), `edit_file`(유일·다중 match, 치환 패턴 literal, surrogate pair 보호), `find_files`/`search_text`(deny·symlink·ignore 파일·상한·abort), glob 병리 패턴 시간 상한, read-only, stale/concurrent write, create race, mode 보존, temp file 정리, host 경로 비노출, legacy와 `2026-07-28` 양쪽 era, stdin EOF와 SIGTERM 시 exit 0
-- `pnpm e2e:tunnel`: `tunnel-client` 0.0.14 `dev proxy --mcp-command` 경유로 tools/list(2026-09-23 재실행, 7개 tool을 legacy·modern 양쪽에서 확인), 기존 4개 tool 호출, revision conflict, escape/deny 거부, audit이 `tunnel-client` 로그에 기록되는지 확인. `tunnel-client` SIGTERM과 SIGKILL 양쪽에서 MCP child 종료
-- hosted: `tunnel-client doctor` `RESULT ok`. `tunnel-client run`은 runtime key로 hosted control plane polling을 시작했고 `/healthz` live, `/readyz` ready. Responses API(`type: mcp`, `tunnel_id`) 호출 시 OpenAI → tunnel-service → `tunnel-client` → stdio child로 `server/discover`, `tools/list`가 전달되어 성공 응답했다(stdio tap으로 확인). model 추론은 API 계정 credit 부족(`429 credit_balance_exhausted`)으로 실패해 hosted `tools/call`은 확인하지 못했다. 종료 시 child 정리도 확인
-- Linux: Docker `node:26-bookworm`(aarch64, Node 26.10)에서 non-root(`node`) 사용자로 clean install 후 typecheck, test(345), build 통과. Node 24 시절에는 root 사용자로도 확인
-- ChatGPT UI (2026-09-23): ChatGPT 웹 Developer mode에서 인증 없음으로 만든 Secure MCP Tunnel connector 경유로 hosted `tools/call`을 확인했다(PRD 15-1). `get_workspace_info`, `list_directory`, `read_file`이 성공했고, `write_file`은 `read_file`로 받은 revision을 넘겨 기존 내용을 보존한 채 항목을 추가했다. `.env` read는 `PATH_BLOCKED`로 거부됐고 message에 host 경로가 없었다. audit 파일에는 7건이 권한 `0600`으로 기록됐다. connector를 OAuth로 만들면 ChatGPT가 "MCP server ... does not implement OAuth" 오류를 내며, 이때 요청은 child까지 오지 않는다
-- container 격리 (2026-09-23): `docker run -i --network none --read-only -u 12345:12345`(passwd entry 없음, `HOME=/`)로 `node:26-bookworm`에서 stdio로 직접 호출했다. startup이 M27 검사를 통과했고 `read_file`, `write_file`(새 파일 생성)이 성공했으며 audit 파일이 권한 `0600`으로 기록됐다
-- release bundle (2026-09-23): `pnpm bundle`이 4개 package(`@modelcontextprotocol/server`, `@modelcontextprotocol/core`, `zod`, `ignore`)를 묶어 891 KB `index.mjs`를 만들었다. 두 번 build한 `SHA256SUMS`가 같았다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 16개와 `pnpm e2e:tunnel`(legacy·modern 양쪽)이 통과했고, repo 밖 `node_modules`가 없는 directory에서도 실행됐다 (이 package 목록은 SDK dist에 미리 묶인 package를 빠뜨렸다. M51)
-- CI (2026-09-23): M28 반영 후 commit `4908af0`의 CI run 35818539212가 ubuntu-latest, macos-latest, windows-latest 모두 통과했다
-- release `v0.1.0` (2026-09-23): tag push로 release workflow run 35818627892가 성공했고, GitHub Release에 `index.mjs`, `index.mjs.map`, `SHA256SUMS`, `THIRD_PARTY_LICENSES.txt`가 올라갔다. 2026-09-24에 repo 밖 임시 directory로 `gh release download v0.1.0`을 받아 `shasum -a 256 -c SHA256SUMS`(3개 파일 OK)와 파일별 `gh attestation verify --repo psw7205/private-workspace-mcp`(3개 모두 통과)를 확인했다. attestation 하나가 3개 파일을 subject로 담고 signer는 `release.yml@refs/tags/v0.1.0`이다. 내용을 바꾼 `index.mjs`는 verify가 실패했다
-- multi-workspace (2026-09-24, ADR-008): `pnpm test` 376개 통과. stdio test로 `WORKSPACE_ROOTS`의 `workspace` enum schema, workspace 간 격리, workspace별 escape·deny 거부, 모르는 이름과 누락 거부, audit의 `workspace` field, single mode schema에 `workspace`가 없음을 확인했다. `pnpm e2e:tunnel`에 multi case를 추가해 `tunnel-client` 0.0.14 `dev proxy` 경유(modern era)로 같은 항목이 통과했다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 23개도 통과했다. hosted(ChatGPT UI) 경로는 아직 확인하지 않았다
-- workspace별 mode (2026-09-24, ADR-008 Amendment): `pnpm test` 12 files, 391 tests 통과(config 65, stdio 27). config test로 `WORKSPACE_READ_WRITE`의 workspace별 mode, `WORKSPACE_MODE=read-write` 단독 시 전체 read-write, 거부 조건(single mode, `WORKSPACE_MODE` 동시 지정, 없는 이름, 중복, 빈 항목, 대소문자 다른 이름)을 확인했다. stdio test로 `workspaces[].mode`와 top-level `mode` 부재, description의 쓰기 가능 workspace 이름, read-only workspace의 `write_file`·`edit_file` `READ_ONLY`와 쓰기 가능 workspace의 성공, audit의 `workspace`·`error_code`, host 경로 비노출을 확인했다. single mode는 `main`과 tools/list·`get_workspace_info`·`READ_ONLY` 결과를 JSON으로 비교해 byte 단위로 같았다(read-only·read-write 양쪽). `pnpm e2e:tunnel` multi case를 `WORKSPACE_READ_WRITE=web`으로 바꿔 `tunnel-client` `dev proxy` 경유로 `api` 쓰기 `READ_ONLY`, `web` 쓰기 성공, audit의 `READ_ONLY` 기록이 통과했다
-- multi-edit (2026-09-24, M40~M42): `pnpm test` 12 files, 408개 통과(per-workspace mode 병합 후). unit test로 순차 적용, edit별 교체 횟수, 뒤 edit 실패 시 무변경과 `edits[i]` 표시, surrogate pair 분할(중간 분할 후 재결합, 두 pair에 걸친 match, lone surrogate `new_string`), 중간·최종 write limit, 결과를 만들기 전 크기 사전 검사(1 MiB `replace_all`이 `RangeError` 대신 `FILE_TOO_LARGE`), 경로 오류가 surrogate 검사보다 먼저 나옴, 개수 상한을 확인했다. stdio test로 `multi_edit_file` schema(`maxItems` 100, annotations), `edit_file` 입력 schema 불변, 성공·실패 호출, `WORKSPACE_READ_WRITE` 혼합 설정에서 read-only workspace `READ_ONLY`와 writable workspace 성공을 확인했다. `pnpm e2e:tunnel`이 `tunnel-client` `dev proxy` 경유 legacy·modern 양쪽에서 8개 tool을, multi case에서 `multi_edit_file`의 workspace별 mode를 확인했다
-- timeout 후 쓰기 중단 (2026-09-24, M43): `pnpm test` 13 files, 416개 통과. unit test로 이미 abort된 signal이면 기존 파일 교체·새 파일 생성 모두 무변경(부모 directory도 만들지 않음), lock을 얻은 뒤 abort되면 revision 확인과 temp file 쓰기 후에도 commit하지 않음, 앞선 쓰기가 lock을 잡은 동안 대기 중인 요청이 abort되면 쓰지 않음(대기 요청의 `expected_revision`은 앞선 쓰기 결과와 일치), 세 경우 모두 temp file이 남지 않음, `edit_file`·`multi_edit_file` core가 signal을 전달함, abort에 동기로 reject하는 operation에도 응답과 audit이 `TIMEOUT` 1건임을 확인했다. 느린 쓰기는 sleep 대신 lock 안의 `resolveForWrite`를 막는 `PathGuard` subclass(`GatedGuard`)로 재현했다. handler 단위로는 in-memory transport로 `write_file`·`edit_file`·`multi_edit_file`을 호출해 client가 `TIMEOUT`을 받은 뒤 gate를 열어도 파일이 바뀌지 않고 audit이 `TIMEOUT` 1건임을 확인했다. 세 handler에서 signal 전달을 빼면 이 test 3개가 실패한다(mutation 확인). `runTool`을 바꿨으므로 `pnpm e2e:tunnel`도 legacy·modern·multi 모두 통과했다
-- CLI 설정 확인 (2026-09-24, M47~M48): `pnpm test` 13 files, 424개 통과(stdio 35). stdio test로 `--check`가 single(`WORKSPACE_MODE`, limit, audit file, 추가 deny)과 multi(`WORKSPACE_READ_WRITE`) 설정에서 exit 0, stdout 비어 있음, stderr 요약에 canonical root와 workspace별 mode가 나옴, audit file을 만들지 않음, 잘못된 설정에서 flag 없는 startup과 같은 stderr로 exit 1, `--version`이 `package.json` version과 같음, 모르는 flag·positional·값 붙은 flag·두 flag 동시 지정이 exit 2임을 확인했다. test는 child stdin을 닫지 않으므로 serve로 빠지면 timeout으로 실패한다(구현 전 red 확인). `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 35개가 통과했고, entry를 바꿨으므로 `pnpm e2e:tunnel`도 legacy·modern·multi 모두 통과했다
-- regex 검색 (2026-09-24, M44~M46): `pnpm test` 13 files, 443개 통과(main rebase 후). unit test로 regex match와 literal과 같은 결과 shape, 기본 대소문자 무시와 `case_sensitive`, 줄 단위 `^`·`$`(`\r\n` 파일), regex는 opt-in일 때만 해석, UTF-16 열이 literal과 같음, ignore·deny 규칙 유지, 잘못된 패턴·257자·복잡도 초과가 순회 전에 `INVALID_PATH`이고 host 경로 비노출, `read_file`과 같은 줄 번호(마지막 줄바꿈, 빈 파일, `^\s*$`, CRLF), case-insensitive 오류 message에 `(?i)`가 없음, 병리 패턴 4개가 1 MiB 한 줄에서 끝남(CI 편차 때문에 시간 assertion은 두지 않음), 파일 도중 abort가 `AbortError`로 끝남(양보를 빼면 resolve되어 실패)을 확인했다. stdio test로 `regex` schema(boolean, 기본 false, 필수 아님), regex 호출, 잘못된 패턴의 `INVALID_PATH`를 확인했다. `pnpm bundle`이 5개 package를 묶었고 `THIRD_PARTY_LICENSES.txt`에 `re2js@2.8.6 (MIT)`가 들어갔으며, `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 36개가 통과했다. tool 이름·transport·종료 처리는 바뀌지 않아 `pnpm e2e:tunnel`은 다시 돌리지 않았다
-- edit dry run (2026-09-24, M49~M50): `pnpm test` 14 files, 477개 통과(main rebase 후, `edit-diff` 13, `file-editor` 57, stdio 37). unit test로 dry run이 파일 bytes·mtime을 바꾸지 않고 실제 edit와 같은 `revision`을 돌려줌(단일·다중), 15가지 실패(no match, ambiguous, 빈 `old_string`, read-only, 없는 파일, non-UTF-8, write limit, UTF-16 사전 검사는 통과하지만 UTF-8 byte 수로 넘는 결과, surrogate 분할, deny, symlink 대상, workspace 밖, stale revision, 뒤 edit 실패, 개수 상한)에서 `edit_file`·`multi_edit_file` 양쪽 code와 message가 실제 edit와 같음, diff의 단일·분리·병합 hunk, 같은 줄·맞닿은 줄 edit, 앞 edit 결과를 다시 고치는 순차 edit, 순수 삽입·삭제, 변경 없음, no-EOL marker, CRLF, 64 KiB truncation, 10만 줄 `replace_all`과 줄바꿈 없는 1 MiB 한 줄의 시간 상한을 확인했다. 무작위 edit 500회로 만든 diff를 엄격한 patch 적용기로 원본에 적용하면 결과와 같음을 확인했다. stdio test로 `dry_run` schema(기본 false, 필수 아님, output required 유지), dry run 결과와 파일 무변경, `dry_run` 없는 출력 key가 v0.1.0과 같음, audit의 `dry_run: true`와 `bytes_written` 부재, read-only mode에서 두 tool의 dry run이 `READ_ONLY`임을 확인했다. `scripts/e2e-tunnel-client.ts`는 tool 이름과 `workspace` enum만 확인하므로 다시 실행하지 않았다
-- bundle license 보완 (2026-09-24, M51): `pnpm bundle`이 metafile과 source map에서 12개 package를 찾았고, `THIRD_PARTY_LICENSES.txt`에 11개 section(`@modelcontextprotocol/core-internal`은 `@modelcontextprotocol/server` section이 덮음)이 들어갔다. 6개 vendor notice는 `npm pack`한 tarball의 `LICENSE`와 byte 단위로 같고 `fast-uri`는 BSD-3-Clause다. 두 번 build한 `SHA256SUMS`가 같았다. `pnpm test` 15 files, 484개 통과(`third-party-licenses` 7), `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 37개 통과
-- v0.2.0 release 준비 (2026-09-24): version을 0.2.0으로 올리고(`package.json`, `SERVER_VERSION`, README `VERSION=`) local rehearsal을 했다. `pnpm typecheck`, `pnpm test` 15 files 484개 통과, `pnpm build`, `pnpm bundle`이 12개 package로 1,177,334 bytes `index.mjs`를 만들었고 두 번 build한 `SHA256SUMS`가 같았다. `release/*`에 build 머신의 project 경로가 없다. `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 37개, `pnpm e2e:tunnel`(`dist/index.js`와 `release/index.mjs` 양쪽, legacy·modern·multi)이 통과했다. `release/index.mjs --version`은 repo 밖 directory에서도 `0.2.0`을 출력했다. release workflow의 tag 검사 step을 그대로 실행해 `v0.2.0`은 통과, `v0.1.0`·`v0.2`는 exit 1을 확인했다. tag와 push는 하지 않았다. `4908af0` 이후 commit은 아직 어느 OS에서도 CI를 거치지 않았다
-- deny 줄바꿈 (2026-09-24, M64): `pnpm test` 16 files, 514개 통과. 수정 전 새 test 24개가 실패하는 것을 확인했다(`\u0085` case는 수정 전에도 통과). unit test로 `secret*`·`*.pem`·`id_rsa*`·`.env.*`와 추가 pattern이 `\n`·`\r`·`\r\n`·` `·` `를 이름 중간·끝에 둔 segment와 directory segment를 막고, literal `.env`는 `.env\n`을 막지 않음을 확인했다. `createFixture` test(`win32` 제외)로 `secret\nx.txt`·`secret\rx.txt`·`secret x.txt`·`server\n.pem`·`secret\ndir/`가 `list_directory`·`find_files`에서 빠지고 `search_text`가 내용을 읽지 않음, `read_file`이 `secret\nx.txt` 입력은 `INVALID_PATH`로, `secret x.txt` 입력과 `secret\nx.txt`를 가리키는 symlink는 `PATH_BLOCKED`로 거부하고 message에 host 경로가 없음을 확인했다
-- Git read-only (2026-09-24, ADR-004, M52~M63, git 2.54.0 Apple Git-157, macOS): 첫 구현의 test는 구현 뒤에 작성했다. red-first는 mutation 검증으로 대신했고(ADR-004 2.12절 Amendment) 결과는 이 항목 끝에 있다. 보안 review 뒤 수정 3건(첫 commit 전 `--attr-source`, lexical 경로 판정, audit key class)은 red test를 먼저 작성해 실패를 확인한 뒤 구현했다. `pnpm test` 16 files, macOS에서 565개 통과·Windows 전용 2개 skip(`git` 78, stdio 41, config +1). unit test로 child env가 고정 key 9개(+ `GIT_DIR`·`GIT_WORK_TREE`, Windows는 `SystemRoot`·`windir`)뿐이고 `CONTROL_PLANE_API_KEY`·`GIT_*`·`HOME`·`SSH_*`가 가지 않음(fake git의 `env` dump), PATH의 상대·root 안(symlink 경유 포함) 항목 제거, root 안 `git`을 고르지 않음, git이 없으면 detection 실패를 확인했다. repo config의 filter(HEAD `.gitattributes` 경유, `required=true` 포함)·`core.fsmonitor`·`diff.<drv>.textconv`·`diff.<drv>.command`·`diff.external`·`core.pager`·`pager.log`·`gpg.program`+`log.showSignature`·`$GIT_DIR/hooks/post-index-change`가 6개 호출(status, diff 3종, log, show) 어디서도 실행되지 않음(marker 파일), worktree `.gitattributes`와 `core.attributesFile`의 `-diff`가 patch에 반영되지 않음, stat만 바뀐 파일이 있어도 `.git/index` bytes·mtime 불변, 11가지 unsafe config(대상 있는·없는 `include.path=../.gitconfig`, `includeIf`, 다른 workspace로의 include, worktree `core.attributesFile`·`core.hooksPath`, 상대 `core.excludesFile`, `mailmap.file`, `hook.<name>.command`, `=`가 든 driver 이름)와 `~` include가 모든 호출에서 거부되고 program이 실행되지 않음, `.git` 안·root 밖 include는 허용, 비 repo·gitfile·symlink `.git`·하위 directory·linked worktree·submodule·`commondir` 거부, 21가지 rev(`HEAD:.env`, `--output=<path>`(파일 미생성), `stash`, `stash^3`, `refs/notes/commits`, range, reflog 등) 거부와 10가지 허용 형식, detached HEAD, upstream 차이, 과거 commit·worktree·index의 `.env`·`secret.yaml`·`config/.ENV`·`Secrets/…`·`a/.ssh/…`·추가 pattern(`x[1]` escape 포함)이 status/diff/show에 없음(두 겹 각각 단독으로도), denied 파일만 바꾼 commit의 metadata 유지, patch·log·목록 truncation, 출력 상한·timeout·shutdown에서 fake git과 손자 `sleep`이 모두 종료(POSIX), 동시 실행 최대 2개, `GIT_FAILED` message와 audit `error_detail`(`exit:3`)에 stderr·host 경로 없음을 확인했다. mutation 17개(safeguard를 하나씩 제거) 중 14개가 test를 실패시켰다. 실패시키지 않은 중복 방어 3개는 `--no-textconv`·`--no-ext-diff`(plumbing은 원래 실행하지 않음)와 `.git` `lstat` 검사(2.4-3 `rev-parse` 비교가 gitfile·symlink를 따로 거부)로, 모두 두 겹 중 한 겹이다. stdio test로 tool 12개와 annotations, `get_workspace_info.git`, single·multi(`workspace` 필수, 비 repo workspace `NOT_A_REPOSITORY`) 호출, audit의 `bytes_read`·`INVALID_REVISION`, `--check`의 `git:` 줄, git이 없는 `PATH`에서 `--check`와 startup이 같은 message로 exit 1임을 확인했다. `pnpm bundle`(12 packages) 후 `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 41개 통과. `pnpm e2e:tunnel`에 git case(`WORKSPACE_GIT=read-only` repo, tunnel-client env에 `CONTROL_PLANE_API_KEY`)를 추가해 `tunnel-client` 0.0.14 `dev proxy` 경유로 status·log·show·diff, `.env` 비노출, `stash^3` 거부, audit 기록이 legacy·modern·multi case와 함께 통과했다. `windows-latest` CI는 처음에 null device(M52), pathspec escape(M65), 8.3 short name realpath(M55)로 실패했고 수정 뒤 통과했다. 이어 M66(canonical `path` 검사, symlink·`GIT~1`), M67(Windows 실제 `git.exe`)을 red test 먼저 추가해 구현했다. CI run 35971050627에서 ubuntu·macOS·windows 모두 통과했고, Windows에서 git test 78개 중 POSIX 전용 7개를 뺀 전부(M66·M67 Windows 전용 2개 포함)가 실행됐다. M64(deny `*`의 dotAll) 위로 rebase한 뒤 줄바꿈이 든 denied 이름(`key\nfile.pem`, untracked `id_rsa\nbackup`)이 `git_show`·`git_status`에서 세 가지 layer 설정(두 겹, static exclude만, in-process 필터만) 모두 빠지는 test를 추가했다(POSIX 전용). git glob pathspec의 `*`도 줄바꿈과 match하고, dotAll을 빼면 in-process 필터만 켠 경우가 실패한다(mutation 확인). rebase 후 `pnpm test` 17 files, 596개 통과·Windows 전용 2개 skip, bundle stdio 41개, `pnpm e2e:tunnel` 통과
-- 내용 기반 차단 (2026-09-29, ADR-010, M71~M75): `pnpm test` 19 files, 668개 통과·Windows 전용 2개 skip. 구현 전 filesystem test 22개, config·stdio test 4개가 실패하는 것을 확인했다. unit test로 다음을 확인했다. 9개 pattern id가 각각 match하고 변형(OpenAI legacy·service account, fine-grained PAT, Slack user token, `ASIA`, RSA·PKCS#8 CRLF·legacy 암호화 header)도 잡는다. prose 속 prefix, 짧은 placeholder, tail 한 글자 부족, 단어 중간 prefix, 21자 AWS 형식, Tavily 문서 placeholder, 문자열 literal 속 PEM header, 잘린 PEM 예시, public key는 통과시킨다. adversarial 1 MiB 입력은 1초 안에 끝난다. `read_file`은 window와 무관하게 막힌다. `search_text`는 literal·regex 양쪽, `include_ignored`에서도 차단 파일을 건너뛰고 한 글자 probe가 match 0이다. `.gitignore`는 scan하지 않는다. edit tool 4종은 dry run·match 실패·key prefix probe·stale revision 모두 `PATH_BLOCKED`로 막고 파일을 바꾸지 않는다. `write_file`은 교체를 막고 새 파일 생성과 binary 파일 교체는 허용한다. listing에는 보인다. message는 기존 deny와 같고 값·host 경로가 없으며 `detail`이 `content:<id>`다. `PathGuard(…, false)`면 모두 이전 동작이다. 추적 파일 전체에 match가 없다(M75). stdio test로 audit의 `error_detail: content:github`와 `content_blocked: 1`, stderr에 key가 없음, `WORKSPACE_CONTENT_SCAN=off`, `--check`의 `content scan:` 줄, 잘못된 값의 startup 실패를 확인했다. `pnpm bundle` 후 `TEST_SERVER_ENTRY=release/index.mjs`로 stdio test 45개가 통과했다. `pnpm e2e:tunnel`(`tunnel-client` 0.0.14)은 legacy·modern 양쪽에서 내용 차단 파일의 `PATH_BLOCKED`와 audit pattern id를 확인했고 multi·git case와 함께 통과했다
-- 로컬 source 설치 (2026-09-29, M76~M77): `pnpm test` 20 files, 672개 통과·2개 skip(`install-local` 4개 포함: 설치와 `current` 전환, 이전 target 보고, verify 실패 시 `current`·install dir 무변경, 같은 이름 재사용과 다른 내용 거부). macOS에서 `pnpm install:local`이 release `v0.1.0`에서 `v0.2.0-<commit>`으로 `current`를 옮겼고, 같은 commit으로 다시 실행하면 `SHA256SUMS`가 같아 재사용했다. launchd 예시(`control_plane.api_key: "file:..."`)로 `tunnel-client` 0.0.14를 등록해 `/readyz` 200, 로그의 `listening on stdio` 줄, `kickstart -k` 후 pid 변경을 확인했고 서버 process 환경에 key 변수가 없었다. systemd 예시는 확인하지 않았다
-- 미검증: Responses API 경로의 `tools/call`(API credit 부족으로 model 추론 실패). 같은 tunnel-service 경로의 `tools/call`은 ChatGPT UI로 확인했다
-
-## 7. Future TODO
-
-PRD 16의 Phase 2~11은 그대로 유지한다. shell, process execution은 구현하지 않았고 Git은 read-only tool만 있다(ADR-004). MVP 구현 중 추가로 나온 항목은 다음과 같다.
-
-- ADR-004 2.10절 unresolved는 모두 해소했다(null device M52, 손자 process M67, `GIT~1` M66, `windows-latest` CI run 35971050627 통과). POSIX 전용으로 건너뛰는 git test는 fake git shell script를 쓰는 6개(env dump, 출력 상한·timeout·shutdown 종료, 동시성, `GIT_FAILED`)와 root 안 `git` 탐색 1개
-- git version을 올릴 때 ADR-004 2.3절 실행 key 목록과 `--no-textconv`·`--no-ext-diff`가 plumbing에서 여전히 불필요한지 다시 확인
-- hosted(ChatGPT UI)에서 Git tool 호출 확인(`hosted-verification.md` 부록 C)
-
-- API credit을 충전한 뒤 Responses API 경로의 `tools/call` 확인
-- Phase 2·3에서 보류한 항목: line/range 교체, `write_file` 미리보기(edit dry run은 M49), 여러 파일에 걸친 bulk edit, 문자 class·escape가 있는 glob
-- 알려진 제약: glob의 `{`와 `}`는 alternative 전용이라 이름에 중괄호가 든 파일은 패턴으로 지정할 수 없다. 상위 ignore 규칙에 걸린 기준 경로를 검색하면 상위 ignore 파일 전체가 빠지므로 그 안의 `*.log` 같은 상위 규칙도 적용되지 않는다(M23)
-- `legacy: 'reject'` 채택 검토(4절). OpenAI 두 경로가 모두 modern이라 legacy pin을 원천 차단할 수 있지만, 2025-era client 지원과 stdio legacy test를 함께 정리해야 하므로 별도 결정으로 다룬다
-- `docs/getting-started.md`의 container 실행 예시를 `tunnel-client` `--mcp-command`로 감싸 hosted 경로에서 확인(종료 시 container 정리 포함)
-- `doctor` 첫 항목 후보: `--check`는 audit file과 부모 directory의 쓰기 권한을 확인하지 않는다(M47). 파일을 만들지 않는 `access(W_OK)` 검사로 보완할 수 있다
-- ChatGPT UI(hosted) 확인: `edit_file`·`find_files`·`search_text`·`multi_edit_file` 호출, `WORKSPACE_ROOTS` connector에서 model이 `workspace` 인자를 고르는지(ADR-008), `WORKSPACE_READ_WRITE`로 mode를 섞었을 때 description을 보고 쓰기 가능한 workspace를 고르는지(M38). 절차는 [`hosted-verification.md`](hosted-verification.md), 결과는 6절에 기록
+- (2026-09-29) 문서를 성격별로 나눈다. 이 문서에는 결정(C/M 항목)만 둔다. 설정 표(옛 2절)는 `docs/reference.md` 환경 변수 표에 합치고, 잔여 위험(옛 3절)은 `docs/security.md` "알려진 한계"로, era pin 관측(옛 4절)과 검증 결과(옛 6절)는 더 추가하지 않는 `docs/archive/verification-log.md`로, TODO(옛 7절)는 GitHub issue로 옮긴다. 끝난 MVP 구현 계획(옛 5절)은 지운다. era pin 결정은 M78로 옮겨 적는다. 기존 M 항목과 ADR·PRD 본문의 "notes N절" 참조는 고치지 않고 위 머리말의 대응표로 읽는다. 이후 검증 결과는 commit body에 쓴다.

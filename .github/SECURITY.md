@@ -27,4 +27,4 @@ Please report vulnerabilities privately through GitHub's private vulnerability r
 
 - workspace 안에서 허용된 동작: read-write 모드에서 model이 prompt injection으로 파일을 고치는 것 자체(`docs/security.md`의 client 승인 절 참고).
 - 운영자가 직접 넓힌 설정의 결과, OS 권한 경계 자체의 문제, `tunnel-client`나 MCP client 등 이 repo 밖 구성 요소의 취약점.
-- `docs/implementation-notes.md` 3절에 수용한 잔여 위험으로 기록된 항목. 기록된 것보다 영향이 크다는 근거가 있으면 범위 안으로 본다.
+- `docs/security.md` "알려진 한계"에 수용한 잔여 위험으로 기록된 항목. 기록된 것보다 영향이 크다는 근거가 있으면 범위 안으로 본다.

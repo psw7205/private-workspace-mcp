@@ -131,9 +131,9 @@ path 검증은 defense-in-depth이고, 최종 경계는 전용 OS 사용자나 c
 |------|------|
 | [시작하기](docs/getting-started.md) | 설치, tunnel 연결, 업그레이드, 여러 repo, container, 문제 해결 |
 | [Reference](docs/reference.md) | tool 인자, error code, 환경 변수, CLI |
-| [보안 모델](docs/security.md) | 방어 계층, Git hardening, prompt injection과 승인 |
+| [보안 모델](docs/security.md) | 방어 계층, Git hardening, prompt injection과 승인, 알려진 한계 |
 | [PRD](docs/prd.md) · [ADR](docs/adr/) | 요구사항과 아키텍처 결정 |
-| [Implementation notes](docs/implementation-notes.md) | 문서에 없던 결정, 잔여 위험, 검증 결과, TODO |
+| [Implementation notes](docs/implementation-notes.md) | PRD·ADR에 없던 세부 결정(M 항목) |
 
 ## 개발
 

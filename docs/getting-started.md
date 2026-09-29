@@ -177,7 +177,7 @@ systemctl --user restart tunnel-client-workspace-mcp
 
 - 한 tunnel에는 instance 하나만 띄운다. 서비스로 옮기기 전에 terminal에서 띄운 `run`을 멈춘다.
 - 재시작한 뒤 `/readyz`와 로그의 `listening on stdio (workspace "<name>", <mode>)` 줄로 새 설정이 적용됐는지 본다. 어떤 build가 떴는지는 `readlink "$DIR/current"`와 `get_workspace_info`의 `server_version`으로 확인한다.
-- systemd 예시는 아직 실제 머신에서 확인하지 않았다(implementation notes 6절).
+- systemd 예시는 아직 실제 머신에서 확인하지 않았다.
 
 ## 5. ChatGPT connector 연결
 
@@ -227,7 +227,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 - `<repo>`는 `pnpm install`과 `pnpm build`를 마친 이 repo다.
 - Linux host에서는 `-u`로 준 uid가 `<project>`의 파일을 읽고 쓸 수 있어야 하고, 새 파일은 그 uid 소유로 생긴다(Docker Desktop for Mac은 host 사용자로 매핑한다).
 - `WORKSPACE_ROOTS`를 쓰면 repo마다 `-v <repo-a>:/workspaces/api`처럼 mount하고 `-e WORKSPACE_ROOTS=api=/workspaces/api,web=/workspaces/web`을 준다.
-- `docker run` 단독 stdio 호출은 확인했지만 `tunnel-client` 경유는 아직 확인하지 않았다(implementation notes 6절).
+- `docker run` 단독 stdio 호출은 확인했지만 `tunnel-client` 경유는 아직 확인하지 않았다.
 
 ## 문제 해결
 
@@ -235,7 +235,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 |------|------------|
 | connector 생성 시 "does not implement OAuth" | 인증을 **인증 없음**으로 고른다 |
 | 서버 업그레이드 뒤에도 옛 tool 목록이 보임 | connector Refresh 후 새 대화를 시작한다 |
-| 한동안 되다가 ChatGPT 요청이 모두 실패 | MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 `tunnel-client`에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로 `tunnel-client`를 재시작한다(implementation notes 4절) |
+| 한동안 되다가 ChatGPT 요청이 모두 실패 | MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 `tunnel-client`에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로 `tunnel-client`를 재시작한다(implementation notes M78) |
 | 다른 profile의 tunnel로 연결됨 | `CONTROL_PLANE_TUNNEL_ID`가 export되어 profile의 `tunnel_id`를 덮어쓰고 있다. unset한다 |
 | 이름이 평범한 파일(`backup.json` 등)이 `PATH_BLOCKED` | 내용에 API key나 private key 형식 값이 있어 내용 검사(ADR-010)에 걸렸다. audit의 `error_detail`이 `content:<pattern id>`다. secret이면 파일을 workspace 밖으로 옮긴다. 문서의 예제 값 같은 오탐이면 `WORKSPACE_CONTENT_SCAN=off`로 끌 수 있지만 서버 전체에서 꺼진다 |
 | startup이 exit 1로 끝남 | stderr의 이유를 본다. `--check`로 같은 검증을 반복할 수 있다 |

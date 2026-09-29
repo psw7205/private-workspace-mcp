@@ -4,8 +4,9 @@
 
 ## 먼저 읽을 것
 
-- `docs/prd.md`, `docs/adr/001-architecture.md`: 범위와 아키텍처 결정의 출발점. 고도화하며 필요하면 Amendment나 새 ADR로 바꾼다.
-- `docs/implementation-notes.md`: 문서에 없던 결정(C/M 번호), 잔여 위험, 알려진 제약, 검증 결과, TODO.
+- `docs/security.md`, `docs/reference.md`: 현재 동작. 방어 계층과 알려진 한계, tool·error code·env 계약.
+- `docs/implementation-notes.md`: PRD·ADR에 없던 세부 결정(C/M 번호). source와 test가 M 번호로 참조한다.
+- `docs/prd.md`, `docs/adr/`: 범위와 아키텍처 결정의 출발점이자 결정 당시 snapshot. 고도화하며 필요하면 Amendment나 새 ADR로 바꾼다.
 - 문서에서 결정되지 않은 중요한 사항은 임의로 확장하지 말고 가장 단순하고 보수적인 쪽을 택한다. 택한 결정은 `docs/implementation-notes.md`에 기록한다.
 - ADR 원문은 고치지 않는다. 결정이 바뀌면 해당 절에 `Amendment (날짜)`를 추가한다.
 - implementation notes의 M 항목도 덮어쓰지 않는다. 결정이 바뀌면 새 M 항목을 추가하고 원래 항목에 `(이후 Mxx로 대체)`를 표시한다.
@@ -18,13 +19,19 @@
 | `README.md` | 처음 온 사용자 | 소개, 예시, 빠른 시작, tool 요약. 상세는 링크로 넘긴다 |
 | `docs/getting-started.md` | 운영자 | 설치, tunnel 연결, 업그레이드, 여러 repo, container, 문제 해결 |
 | `docs/reference.md` | 운영자, client 작성자 | tool 인자, error code, 환경 변수, CLI |
-| `docs/security.md` | 운영자, 리뷰어 | 방어 계층, Git hardening, client 승인 |
+| `docs/security.md` | 운영자, 리뷰어 | 방어 계층, Git hardening, client 승인, 알려진 한계(수용한 잔여 위험) |
 | `docs/hosted-verification.md` | 개발자 | ChatGPT UI(hosted) 경로로 미출시 기능을 확인하는 수동 절차 |
 | `AGENTS.md` | 개발자, coding agent | 명령, 불변식, 테스트 규칙, 릴리즈, 구조 |
+| `docs/implementation-notes.md` | 개발자, coding agent | PRD·ADR에 없던 세부 결정(C/M 항목)만 |
+| `docs/prd.md`, `docs/adr/` | 개발자, 리뷰어 | 요구사항과 아키텍처 결정 |
+| `docs/ideas/` | 개발자 | 채택 전 아이디어 초안. 채택하면 ADR로 옮긴다 |
+| `docs/archive/` | 개발자 | 더 추가하지 않는 과거 기록 snapshot |
 
 - tool, error code, env를 추가하거나 바꾸면 `docs/reference.md`를 고치고, README의 tool 요약 표와 특징이 여전히 맞는지 본다.
 - `docs/assets/`의 스크린샷은 가짜 demo fixture로 `pnpm build` 후 MCP Inspector를 띄워 찍는다. Inspector는 server command와 env를 화면에 보여 주므로, 경로가 드러나지 않게 wrapper script(예: PATH에 둔 `private-workspace-mcp` shim이 `WORKSPACE_ROOT`를 설정)로 띄운다. host 절대 경로나 사용자 이름이 보이는 이미지는 올리지 않는다.
 - README의 예시 응답도 같은 방식으로 실제 서버에서 받은 값을 쓴다.
+- 검증 결과(실행한 명령, test 수, 확인한 환경과 version)는 그 변경의 commit body에 쓴다. 문서에 검증 log를 쌓지 않는다. 코드 변경이 없는 수동 검증 결과와 TODO는 GitHub issue에 둔다.
+- 작업용 plan은 repo에 두지 않는다. 결정은 M 항목이나 ADR로, 이유는 commit body로 남긴다.
 
 ## 명령
 
@@ -75,10 +82,11 @@ pnpm install:local  # clean tree 검증·bundle 후 ~/.local/share/private-works
 ## 함정
 
 - TypeScript 7은 `types` 기본값이 `[]`다. `tsconfig.json`의 `types: ["node"]`를 지우면 Node 타입이 사라진다. `strict`는 기본값이라 따로 적지 않는다.
-- MCP SDK `serveStdio`는 stdio connection을 첫 요청의 protocol era로 pin한다. OpenAI hosted 경로는 `2026-07-28` self-contained 요청을 보낸다(implementation notes 4절).
+- MCP SDK `serveStdio`는 stdio connection을 첫 요청의 protocol era로 pin한다. OpenAI hosted 경로는 `2026-07-28` self-contained 요청을 보낸다(implementation notes M78).
 - SDK client에서 version pin은 `versionNegotiation: { mode: { pin: '2026-07-28' } }` 형태다. `{ pin }`만 쓰면 조용히 무시되고 legacy로 연결된다.
 - `tunnel-client`는 child에 자기 환경 변수를 그대로 넘긴다. runtime key를 child에 넘기지 않으려면 `--mcp-command`를 `env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY ...`로 감싼다.
 - 로컬 `.env`(git ignore 대상)의 `TUNNEL_ID`는 `init --tunnel-id`로 profile에 넣고, `API_KEY`는 실행 시 `CONTROL_PLANE_API_KEY`로 넘긴다. `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어써서 profile이 여러 개일 때 tunnel이 섞인다. 값은 출력하지 않는다.
+- git을 올리면 ADR-004 2.3절의 실행 key 목록을 다시 보고, `--no-textconv`·`--no-ext-diff`가 plumbing에서 여전히 불필요한지 확인한다. 새 version이 read 경로에 config 기반 program 실행을 넣으면 hardening이 잡지 못한다(`docs/security.md` "알려진 한계").
 
 ## 릴리즈
 
@@ -108,7 +116,7 @@ scripts/
   bundle.ts                release bundle과 third-party license 수집
   e2e-tunnel-client.ts     tunnel-client dev proxy 경유 e2e
   install-local.ts         source checkout을 release와 같은 구조로 로컬 설치
-docs/                      사용자 문서, PRD, ADR, implementation notes
+docs/                      사용자 문서, PRD, ADR, implementation notes, ideas, archive
 ```
 
 ## Git

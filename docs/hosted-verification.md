@@ -1,15 +1,15 @@
 # Hosted 검증 체크리스트
 
-`pnpm test`와 `pnpm e2e:tunnel`(`tunnel-client dev proxy`)로는 확인했지만 OpenAI hosted 경로로는 아직 확인하지 않은 기능을 ChatGPT UI에서 사람이 확인하는 절차다. 대상은 implementation notes 6절 "미검증"과 7절 TODO의 hosted 항목이다.
+`pnpm test`와 `pnpm e2e:tunnel`(`tunnel-client dev proxy`)로는 확인했지만 OpenAI hosted 경로로는 아직 확인하지 않은 기능을 ChatGPT UI에서 사람이 확인하는 절차다. 남은 항목과 진행 상황은 GitHub issue에서 추적한다.
 
 | 대상 | 근거 |
 |------|------|
-| `edit_file`, `find_files`, `search_text`, `multi_edit_file` 호출 | 2026-09-23 ChatGPT UI 확인은 MVP 4개 tool만 다룸(notes 6절) |
-| `WORKSPACE_ROOTS`의 `workspace` 인자를 model이 고르는지 | ADR-008, notes 7절 |
+| `edit_file`, `find_files`, `search_text`, `multi_edit_file` 호출 | 2026-09-23 ChatGPT UI 확인은 MVP 4개 tool만 다룸([검증 기록](archive/verification-log.md)) |
+| `WORKSPACE_ROOTS`의 `workspace` 인자를 model이 고르는지 | ADR-008 |
 | `WORKSPACE_READ_WRITE`로 섞인 mode를 model이 description으로 구분하는지 | ADR-008 2.2절 Amendment, M38 |
-| (선택) Responses API 경로의 `tools/call` | notes 6절 "미검증" |
-| (선택) container child를 `tunnel-client` 경유로 실행 | [getting-started "container로 격리하기"](getting-started.md#container로-격리하기), notes 7절 |
-| (선택) `WORKSPACE_GIT=read-only` Git tool 호출 | ADR-004, notes 7절 (부록 C) |
+| (선택) Responses API 경로의 `tools/call` | [검증 기록](archive/verification-log.md) "미검증" |
+| (선택) container child를 `tunnel-client` 경유로 실행 | [getting-started "container로 격리하기"](getting-started.md#container로-격리하기) |
+| (선택) `WORKSPACE_GIT=read-only` Git tool 호출 | ADR-004 (부록 C) |
 
 아래 `<repo-root>`는 이 repo checkout, `<fixture>`는 검증용 임시 directory의 절대 경로다.
 
@@ -18,7 +18,7 @@
 - [`getting-started.md`](getting-started.md) 3~5절을 따라 tunnel, `.env`(`TUNNEL_ID`, `API_KEY`), ChatGPT connector(Developer mode, Tunnel, 인증 없음)가 이미 있다고 가정한다. connector는 `tunnel_id`에 묶이므로 새로 만들지 않는다.
 - 검증 대상 기능은 `v0.1.0` release에 없다. `<repo-root>`에서 검증할 `main` commit을 checkout하고 `pnpm install --frozen-lockfile && pnpm build`로 `dist/index.js`를 만든다. commit hash를 기록해 둔다.
 - tunnel 하나에는 `tunnel-client` instance 하나만 띄운다. 평소 쓰는 `tunnel-client run`이 떠 있으면 먼저 멈춘다.
-- 같은 `tunnel-client`에 2025-era(legacy) client를 붙이지 않는다. child가 legacy로 pin되면 이후 ChatGPT 요청이 실패한다(notes 4절).
+- 같은 `tunnel-client`에 2025-era(legacy) client를 붙이지 않는다. child가 legacy로 pin되면 이후 ChatGPT 요청이 실패한다(implementation notes M78).
 - ChatGPT의 write tool 호출 확인은 켠 채로 둔다([`security.md`](security.md#prompt-injection과-client-승인)).
 
 ## 1. Fixture 만들기
@@ -113,13 +113,13 @@ grep -c 'dummy\|created\|web-team' "$A"                       # 0 (파일 내용
 
 ## 6. 결과 기록
 
-- implementation notes 6절에 날짜, 검증한 commit, `tunnel-client` 버전, 단계별 결과(특히 8단계에서 model이 거절했는지 호출했는지)를 한 항목으로 추가한다.
-- 확인된 항목은 notes 7절 TODO에서 지운다. 기대와 다른 결과는 7절에 남기고, 결정이 필요하면 새 M 항목이나 ADR Amendment로 다룬다.
-- 로컬 절대 경로와 tunnel ID는 기록하지 않는다.
+- 해당 GitHub issue에 날짜, 검증한 commit, `tunnel-client` 버전, 단계별 결과(특히 8단계에서 model이 거절했는지 호출했는지)를 comment로 남긴다. 문서나 코드를 함께 고치면 그 commit body에도 적는다.
+- 확인된 항목은 issue에서 체크한다. 기대와 다른 결과는 issue에 남기고, 결정이 필요하면 새 M 항목이나 ADR Amendment로 다룬다.
+- issue는 public이다. 로컬 절대 경로와 tunnel ID는 기록하지 않는다.
 
 ## 부록 A. (선택) Responses API `tools/call`
 
-credit이 있는 API 계정이 필요하다. 2026-09-23에는 `429 credit_balance_exhausted`로 model 추론이 실패해 `server/discover`·`tools/list`까지만 확인했다(notes 6절). 2절의 daemon을 띄운 채로 호출한다.
+credit이 있는 API 계정이 필요하다. 2026-09-23에는 `429 credit_balance_exhausted`로 model 추론이 실패해 `server/discover`·`tools/list`까지만 확인했다([검증 기록](archive/verification-log.md)). 2절의 daemon을 띄운 채로 호출한다.
 
 ```sh
 curl -s https://api.openai.com/v1/responses \
@@ -135,7 +135,7 @@ curl -s https://api.openai.com/v1/responses \
 ```
 
 - 기대: `output`에 `mcp_list_tools`(8개)와 `mcp_call` 항목이 있고 `mcp_call` output이 3절 2·6단계와 같다. 쓰기 tool을 요청하면 `mcp_approval_request`가 온다.
-- audit에 호출이 기록된다. 결과는 notes 6절 "미검증" 항목을 갱신한다.
+- audit에 호출이 기록된다. 결과는 6절대로 남긴다.
 
 ## 부록 B. (선택) container child를 `tunnel-client` 경유로
 
@@ -143,7 +143,7 @@ curl -s https://api.openai.com/v1/responses \
 
 ## 부록 C. (선택) read-only Git tool (ADR-004)
 
-`WORKSPACE_GIT=read-only`로 켠 Git tool 4개를 hosted 경로로 확인한다. `pnpm e2e:tunnel`의 git case는 `tunnel-client dev proxy`까지만 확인했다(notes 6절).
+`WORKSPACE_GIT=read-only`로 켠 Git tool 4개를 hosted 경로로 확인한다. `pnpm e2e:tunnel`의 git case는 `tunnel-client dev proxy`까지만 확인했다([검증 기록](archive/verification-log.md)).
 
 1. `api`를 repository로 만든다. `.env`가 history에 남도록 먼저 commit하고, 그 뒤 worktree를 하나 바꾼다.
 
