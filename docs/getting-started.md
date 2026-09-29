@@ -61,13 +61,13 @@ $(mise which node) "$DIR/current/index.mjs" --version
 
 - `gh attestation verify`는 파일이 이 repo의 release workflow에서 build됐는지 Sigstore 서명으로 확인한다. checksum만으로는 Release asset이 바뀐 경우를 막지 못한다.
 - bundle은 minify하지 않는다. release된 파일을 그대로 읽고 감사할 수 있다.
-- source를 build해 쓰려면 아래 `<entry>` 자리에 repo의 `dist/index.js`를 넣고, 업그레이드할 때 `pnpm build`를 다시 한다.
+- release 대신 source checkout을 쓰려면 checkout에서 `pnpm install:local`을 실행한다. tracked 파일에 commit하지 않은 변경이 없어야 하고, typecheck·test·bundle이 통과하면 bundle을 같은 directory의 `v<version>-<commit>`에 설치한 뒤 `current`를 옮긴다. 설치 위치는 `PRIVATE_WORKSPACE_MCP_INSTALL_DIR`로 바꿀 수 있다. macOS와 Linux만 지원한다.
 
 아래에서 쓰는 자리표시자:
 
 | 자리표시자 | 값 |
 |-----------|-----|
-| `<entry>` | release 설치면 `$HOME/.local/share/private-workspace-mcp/current/index.mjs`, source build면 repo의 `dist/index.js` 절대 경로 |
+| `<entry>` | `$HOME/.local/share/private-workspace-mcp/current/index.mjs`(release 설치와 `pnpm install:local` 공통) |
 | `<project>` | agent 전용 directory의 절대 경로(filesystem root와 home은 거부됨) |
 | `<audit-dir>` | workspace 밖의 기존 directory. 빼면 audit은 `tunnel-client` 로그로 간다 |
 
@@ -116,6 +116,69 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
 - tunnel ID는 `init`이 profile에 적어 두므로 넘기지 않는다. `tunnel-client` 설정 우선순위는 flags > 환경 변수 > profile YAML이라 `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어쓴다.
 - `run`이 떠 있는 동안에만 ChatGPT가 tool을 호출할 수 있다. 상태는 `http://127.0.0.1:47801/ui`와 `/readyz`로 본다(3절에서 정한 `health.listen_addr`).
 
+### 서비스로 실행
+
+terminal을 열어 두지 않고 로그인 시 자동으로 띄우려면 `tunnel-client run`을 OS 서비스로 등록한다. 서비스 환경에는 `.env`, shell profile, mise가 없으므로 key는 파일로 넘기고 실행 파일은 절대 경로로 적는다.
+
+1. runtime key를 권한 `0600` 파일에 두고 profile이 그 파일을 읽게 한다. `tunnel-client profiles edit workspace-mcp`로 `control_plane.api_key`를 `"env:CONTROL_PLANE_API_KEY"`에서 `"file:<key-file>"`로 바꾼다. key가 환경 변수에 없으므로 child에도 전달되지 않는다.
+
+   ```sh
+   ( umask 077 && set -a && . ./.env && set +a && printf '%s' "$API_KEY" > <key-file> )
+   tunnel-client doctor --profile workspace-mcp --explain
+   ```
+
+2. profile의 `--mcp-command`에 든 node가 절대 경로인지 확인한다. 3절의 `$(mise which node)`는 `init` 때 절대 경로로 풀려 들어간다. mise로 Node를 올려 경로가 바뀌면 profile도 고친다.
+3. 서비스를 등록한다. `<tunnel-client>`는 `command -v tunnel-client`의 절대 경로, `<log-dir>`는 workspace 밖의 기존 directory다. 서버 stderr와 audit(파일을 지정하지 않았다면)도 이 로그로 간다.
+
+macOS(launchd): `~/Library/LaunchAgents/<label>.plist`. `<label>`은 `com.example.tunnel-client.workspace-mcp`처럼 reverse-DNS 이름을 쓴다.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string><label></string>
+  <key>ProgramArguments</key>
+  <array>
+    <string><tunnel-client></string><string>run</string><string>--profile</string><string>workspace-mcp</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string><log-dir>/workspace-mcp.log</string>
+  <key>StandardErrorPath</key><string><log-dir>/workspace-mcp.log</string>
+</dict>
+</plist>
+```
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist   # 등록하고 시작
+launchctl kickstart -k gui/$(id -u)/<label>                            # 재시작
+launchctl bootout gui/$(id -u)/<label>                                 # 멈추고 등록 해제
+```
+
+Linux(systemd user unit): `~/.config/systemd/user/tunnel-client-workspace-mcp.service`. 로그는 `journalctl --user -u tunnel-client-workspace-mcp`로 본다.
+
+```ini
+[Unit]
+Description=tunnel-client (workspace-mcp)
+
+[Service]
+ExecStart=<tunnel-client> run --profile workspace-mcp
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user daemon-reload && systemctl --user enable --now tunnel-client-workspace-mcp
+systemctl --user restart tunnel-client-workspace-mcp
+```
+
+- 한 tunnel에는 instance 하나만 띄운다. 서비스로 옮기기 전에 terminal에서 띄운 `run`을 멈춘다.
+- 재시작한 뒤 `/readyz`와 로그의 `listening on stdio (workspace "<name>", <mode>)` 줄로 새 설정이 적용됐는지 본다. 어떤 build가 떴는지는 `readlink "$DIR/current"`와 `get_workspace_info`의 `server_version`으로 확인한다.
+- systemd 예시는 아직 실제 머신에서 확인하지 않았다(implementation notes 6절).
+
 ## 5. ChatGPT connector 연결
 
 `run`이 healthy인 동안 ChatGPT에서 connector를 만든다.
@@ -134,8 +197,8 @@ Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspa
 
 connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다.
 
-1. [1. 설치](#1-설치)와 같은 방법으로 새 버전을 받아 `current`를 바꾼다(source build면 `pnpm build`). profile은 고치지 않는다.
-2. profile의 `--mcp-command`와 같은 env로 `$(mise which node) "$DIR/current/index.mjs" --check`가 통과하는지 확인하고 daemon을 다시 띄운다. 내부 동작만 바뀌었으면 여기까지다.
+1. [1. 설치](#1-설치)와 같은 방법으로 새 버전을 받아 `current`를 바꾼다(source checkout이면 `pnpm install:local`). profile은 고치지 않는다.
+2. profile의 `--mcp-command`와 같은 env로 `$(mise which node) "$DIR/current/index.mjs" --check`가 통과하는지 확인하고 daemon을 다시 띄운다([서비스로 실행](#서비스로-실행)했다면 재시작 명령 하나다). 내부 동작만 바뀌었으면 여기까지다.
 3. tool 목록, description, schema가 바뀌었으면 https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른다.
 4. 새 대화를 시작한다. 기존 대화에는 이전 tool 목록이 남을 수 있다.
 

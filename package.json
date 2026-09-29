@@ -21,7 +21,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "e2e:tunnel": "pnpm build && node --import tsx scripts/e2e-tunnel-client.ts"
+    "e2e:tunnel": "pnpm build && node --import tsx scripts/e2e-tunnel-client.ts",
+    "install:local": "node --import tsx scripts/install-local.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",

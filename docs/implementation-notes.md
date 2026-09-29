@@ -188,6 +188,13 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 | M74 | `search_text`의 skip과 audit | 차단 파일은 줄 단위 match 전에 건너뛰고 `files_searched`에 세지 않는다. 읽은 bytes는 decode 실패 파일과 같이 `bytes_read`에 들어간다. audit record에 `content_blocked`(건너뛴 파일 수)를 1 이상일 때만 넣는다. `read_file`·edit·`write_file` 차단은 `error_detail`이 `content:<pattern id>`다 | 3.5절대로 경로 목록이나 값은 남기지 않고, 운영자가 오탐을 진단할 수 있는 만큼만 남긴다. output schema는 바꾸지 않는다 |
 | M75 | repo 자체의 credential 형식 값 | 채택 시점에 추적 중인 파일 전체를 scan했을 때 걸린 것은 ADR-010 3.3절·4절의 AWS 예제 literal 두 곳뿐이었다. 3.3절은 `AKIA`와 나머지를 나눠 적고, 4절은 설명으로 바꿨다. test와 e2e의 credential 형식 값은 모두 runtime에 이어 붙여 만든다(`test/helpers.ts` `FAKE_CREDENTIALS`) | 이 repo를 workspace로 쓰는 agent가 source·test·문서를 계속 읽고 고칠 수 있어야 한다. 새 문서나 test에 예제 key를 literal로 넣으면 그 파일이 막힌다 |
 
+### 1.2.19 로컬 source 설치 (2026-09-29)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M76 | `pnpm install:local` | source checkout을 release와 같은 구조로 설치한다. tracked 파일에 commit하지 않은 변경이 있으면 거부하고(untracked는 보지 않음), `typecheck`·`test`·`bundle` 뒤 `release/`를 `<install-dir>/v<version>-<commit>`에 복사한다. `<install-dir>`는 `PRIVATE_WORKSPACE_MCP_INSTALL_DIR` 또는 `~/.local/share/private-workspace-mcp`다. 복사는 임시 directory에 한 뒤 설치된 entry의 `--version`이 `package.json` version과 같을 때만 rename하고, `current`는 새 symlink를 rename해 바꾼다. 같은 이름이 이미 있으면 `SHA256SUMS`가 같을 때만 재사용한다. 오래된 설치는 지우지 않는다. `win32`는 거부한다 | release 설치 문서와 같은 `current` 구조라 rollback과 profile이 release와 같다. version만으로는 같은 version의 dev build끼리 구별되지 않아 directory 이름에 commit을 넣는다. `--version` 출력은 바꾸지 않는다. `ln -sfn`은 unlink 후 생성이라 `current`가 없는 순간이 생긴다. 서비스 재시작은 OS·설치마다 다르므로 script에 넣지 않고 문서에 둔다. Windows는 directory symlink 권한 문제가 있고 daemon 운영 예시도 없다 |
+| M77 | daemon 서비스 예시 | getting-started 4절에 launchd와 systemd user unit 예시를 둔다. runtime key는 profile의 `control_plane.api_key: "file:<key-file>"`(권한 `0600`)로 넘기고, 서비스 정의에는 `tunnel-client` 절대 경로와 `run --profile`만 둔다 | 서비스 환경에는 `.env`와 mise가 없다. key를 파일 참조로 넘기면 서비스 정의에 secret이 없고 child 환경에도 key가 없다. `tunnel-client` 0.0.14 `doctor`가 `file:` 참조를 `PASS configured`로 받는 것을 확인했다 |
+
 ### 1.3 구조 조정
 
 - ADR 7의 `policy/workspace-policy.ts`는 만들지 않는다. mode 판정은 config 값 하나로 충분하다(M39 이후 workspace마다 `Workspace.mode` 하나). 파일이 필요해지면 Phase 8 policy engine에서 도입한다.

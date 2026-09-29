@@ -38,6 +38,7 @@ pnpm test           # vitest: unit + stdio integration (서버 process를 직접
 pnpm build          # tsc -p tsconfig.build.json -> dist/index.js
 pnpm bundle         # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS
 pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-client 필요, OpenAI credential 불필요)
+pnpm install:local  # clean tree 검증·bundle 후 ~/.local/share/private-workspace-mcp/v<version>-<commit>에 설치하고 current 전환 (macOS, Linux)
 ```
 
 작업 완료를 보고하기 전에 `pnpm typecheck`와 `pnpm test`를 실행한다. 서버 entry, transport, 종료 처리를 바꿨다면 `pnpm e2e:tunnel`까지 실행한다.
@@ -46,6 +47,7 @@ pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-clien
 - `pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, `WORKSPACE_ROOTS`·`WORKSPACE_READ_WRITE` multi case, `WORKSPACE_GIT=read-only` repo의 Git tool 호출, tunnel-client 종료 시 child 정리를 확인한다.
 - `TEST_SERVER_ENTRY=release/index.mjs`를 주면 `test/stdio.test.ts`와 `pnpm e2e:tunnel`이 source 대신 bundle을 실행한다.
 - CI(`.github/workflows/ci.yml`)는 ubuntu, macOS, windows에서 typecheck, test, build를 실행하고, bundle로 stdio test를 한 번 더 돌린다.
+- 로컬 daemon으로 dogfooding할 때는 `pnpm install:local` 뒤 daemon을 재시작한다. profile이 repo의 `dist/`를 직접 가리키게 하지 않는다. 개발 중 `pnpm build`가 검증 안 된 build를 daemon에 올린다.
 - ChatGPT UI(hosted) 경로 확인은 `docs/hosted-verification.md`의 수동 절차를 따른다.
 
 ## 보안 불변식
@@ -105,6 +107,7 @@ test/                      vitest (security case 중심, fixture는 임시 디�
 scripts/
   bundle.ts                release bundle과 third-party license 수집
   e2e-tunnel-client.ts     tunnel-client dev proxy 경유 e2e
+  install-local.ts         source checkout을 release와 같은 구조로 로컬 설치
 docs/                      사용자 문서, PRD, ADR, implementation notes
 ```
 
