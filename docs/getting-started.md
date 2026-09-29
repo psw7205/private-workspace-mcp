@@ -100,6 +100,7 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
 
 - child는 `tunnel-client`의 환경 변수를 상속하고, child의 stderr는 `tunnel-client` 로그로 전달된다(`tunnel-client` 0.0.14에서 확인). 그래서 서버 설정은 command에 명시하고, `env -u`로 runtime key를 child에 넘기지 않는다.
 - 경로와 mode를 바꾸려면 `tunnel-client profiles edit workspace-mcp`로 고친다. 고칠 때도 같은 env로 `--check`를 먼저 돌린다.
+- sample은 상태 페이지 port를 `health.listen_addr: "127.0.0.1:8080"`으로 만든다. 8080은 다른 개발 서버가 흔히 쓰는 port라, 같은 명령으로 `127.0.0.1:47801`처럼 잘 쓰지 않는 port로 바꾼다. 아래 URL은 이 값을 기준으로 한다.
 
 ## 4. daemon 실행
 
@@ -113,7 +114,7 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp \
 ```
 
 - tunnel ID는 `init`이 profile에 적어 두므로 넘기지 않는다. `tunnel-client` 설정 우선순위는 flags > 환경 변수 > profile YAML이라 `CONTROL_PLANE_TUNNEL_ID`를 export하면 profile의 `tunnel_id`를 덮어쓴다.
-- `run`이 떠 있는 동안에만 ChatGPT가 tool을 호출할 수 있다. 상태는 `http://127.0.0.1:8080/ui`와 `/readyz`로 본다.
+- `run`이 떠 있는 동안에만 ChatGPT가 tool을 호출할 수 있다. 상태는 `http://127.0.0.1:47801/ui`와 `/readyz`로 본다(3절에서 정한 `health.listen_addr`).
 
 ## 5. ChatGPT connector 연결
 
@@ -145,7 +146,7 @@ rollback은 `current`를 이전 버전으로 되돌리면 된다.
 - **한 tunnel에 instance 하나**: tunnel ID 하나에는 `tunnel-client` instance 하나만 실행한다. stdio child가 instance마다 따로 뜨기 때문이다.
 - **한 머신의 repo 여러 개**: tunnel 하나로 노출한다. `--mcp-command`의 `WORKSPACE_ROOT=<project>`를 `WORKSPACE_ROOTS=api=<repo-a>,web=<repo-b>`로 바꾸면 child 하나가 모든 repo를 다루고 model은 tool 인자 `workspace`로 repo를 고른다(ADR-008). repo를 더하거나 빼면 tool schema가 바뀌므로 daemon을 다시 띄우고 connector를 Refresh한다. 이 tunnel을 쓸 수 있는 사용자는 모든 repo에 접근한다.
 - **repo마다 다른 mode**: `WORKSPACE_MODE=read-write` 대신 `WORKSPACE_READ_WRITE=api`처럼 이름을 나열한다. 나머지 repo는 read-only이고 `write_file`·`edit_file`·`multi_edit_file` description에 쓰기 가능한 이름이 적힌다. `WORKSPACE_READ_WRITE`는 `WORKSPACE_MODE`와 함께 쓸 수 없으므로 `WORKSPACE_MODE=read-write`는 지운다.
-- **tunnel을 나눌 때**: tunnel, profile, daemon, connector는 접근할 사람이나 용도가 달라야 할 때, 또는 read/write limit·timeout·추가 deny pattern처럼 서버 전체에 걸리는 설정이 repo마다 달라야 할 때만 따로 둔다. profile마다 `health.listen_addr` port(`8080`, `8081`, …)와 `WORKSPACE_AUDIT_LOG` 파일을 다르게 하고, 실행 명령의 `--profile`만 바꾼다. `tunnel-client`의 channel별 command(`--mcp.command channel=...`)는 OpenAI 쪽에서 channel을 고를 수단이 없어 쓰지 않는다.
+- **tunnel을 나눌 때**: tunnel, profile, daemon, connector는 접근할 사람이나 용도가 달라야 할 때, 또는 read/write limit·timeout·추가 deny pattern처럼 서버 전체에 걸리는 설정이 repo마다 달라야 할 때만 따로 둔다. profile마다 `health.listen_addr` port(`47801`, `47802`, …)와 `WORKSPACE_AUDIT_LOG` 파일을 다르게 하고, 실행 명령의 `--profile`만 바꾼다. `tunnel-client`의 channel별 command(`--mcp.command channel=...`)는 OpenAI 쪽에서 channel을 고를 수단이 없어 쓰지 않는다.
 - **공통 상위 directory는 root로 쓰지 않는다**: 다른 repo까지 노출되고, root 밖을 가리키는 symlink는 `PATH_OUTSIDE_WORKSPACE`로 거부된다.
 - **여러 머신**: 머신마다 tunnel과 connector를 따로 만든다. 같은 tunnel을 여러 머신에서 쓰려면 한 번에 한 머신에서만 daemon을 띄운다. 이때 connector는 그대로 쓸 수 있지만, 연결되는 workspace는 그 머신 profile의 `WORKSPACE_ROOT`(또는 `WORKSPACE_ROOTS`)다.
 

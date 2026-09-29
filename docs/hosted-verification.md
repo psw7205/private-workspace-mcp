@@ -56,7 +56,7 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp-verif
 ```
 
 - `WORKSPACE_MODE`는 넣지 않는다. `WORKSPACE_READ_WRITE`와 함께 주면 값과 상관없이 startup이 거부된다(M37).
-- 실행은 [`getting-started.md`](getting-started.md#4-daemon-실행)의 `run` 블록에서 `--profile workspace-mcp-verify`로 바꿔 쓴다. `doctor`가 `RESULT ok`이고 `http://127.0.0.1:8080/readyz`가 ready인지 본다.
+- 실행은 [`getting-started.md`](getting-started.md#4-daemon-실행)의 `run` 블록에서 `--profile workspace-mcp-verify`로 바꿔 쓴다. `health.listen_addr`는 평소 profile과 다른 port로 바꾼다(예: `127.0.0.1:47809`, [`getting-started.md`](getting-started.md#3-tunnel-profile-만들기) 3절). `doctor`가 `RESULT ok`이고 `http://127.0.0.1:47809/readyz`가 ready인지 본다.
 - startup이 실패하면 `tunnel-client` 로그에 stderr 이유가 남는다.
 
 선택: hosted로 가기 전에 같은 env로 MCP Inspector를 띄워 schema를 미리 볼 수 있다([`getting-started.md`](getting-started.md#먼저-로컬에서-써-보기)). Inspector는 `tunnel-client`와 별개 process라 era pin에 영향을 주지 않는다.
