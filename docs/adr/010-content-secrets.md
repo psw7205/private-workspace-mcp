@@ -1,6 +1,6 @@
 # ADR-010 — Content-based Secret Backstop
 
-* Status: Proposed (2026-09-28)
+* Status: Accepted (2026-09-29)
 * Date: 2026-09-28
 * Scope: 이름이 평범한 파일 안의 credential이 filesystem tool 응답으로 나가는 경로
 
@@ -93,7 +93,7 @@ walker가 읽는 `.gitignore`·`.ignore`(`loadIgnoreScope`)는 client에 내용�
 
 ### 3.3 오탐과 opt-out
 
-대표 오탐은 문서화된 예제 값이다. AWS 문서의 `AKIAIOSFODNN7EXAMPLE`은 `aws_access_key_id`와 정확히 match한다. secret scanner, SDK, 이 repo 자체의 test fixture가 이런 값을 담으면 해당 파일을 이 서버로 읽거나 고칠 수 없게 된다.
+대표 오탐은 문서화된 예제 값이다. AWS 문서의 예제 access key id(`AKIA` 뒤에 `IOSFODNN7EXAMPLE`)는 `aws_access_key_id`와 정확히 match한다. secret scanner, SDK, 이 repo 자체의 test fixture가 이런 값을 담으면 해당 파일을 이 서버로 읽거나 고칠 수 없게 된다.
 
 * **기본값: 켜짐.** M26과 같은 판단이다. 오탐은 read 거부로 끝나고 운영자가 되돌릴 수 있지만, 누락은 되돌릴 수 없다. v0.1.0 사용자에게는 upgrade 시 동작 변경이지만, M26이 v0.2.0 hardening에서 deny 기본값을 넓힌 것과 같은 방향이다.
 * **opt-out: 서버 전체 kill switch 하나**(`WORKSPACE_CONTENT_SCAN=off`, 기본 `on`, 다른 값은 startup에서 거부). 이 layer는 `DEFAULT_DENY_PATTERNS`가 아니므로 끌 수 있게 해도 AGENTS.md 보안 불변식 3을 어기지 않는다. model은 env를 바꿀 수 없다.
@@ -128,7 +128,7 @@ M4(deny 항목은 listing에서 생략해 존재를 숨김)와는 일관되지 �
 * `src/policy/content-patterns.ts`(신규): pattern 목록과 `findCredentialPattern(text): string | undefined`(pattern id 반환).
 * `src/filesystem/file-reader.ts`(`readTextFile`), `src/filesystem/file-search.ts`(scan 후 skip, skip 수 집계), `src/filesystem/file-editor.ts`, `src/filesystem/file-writer.ts`(기존 파일 경로).
 * `src/config/config.ts`(`WORKSPACE_CONTENT_SCAN` 파싱·검증), `src/cli.ts`의 `--check` 출력. `get_workspace_info`는 바꾸지 않는다.
-* test(security 영향이므로 red-first): pattern별 match·비 match(tail 길이 경계, 단어 중간 prefix), `AKIAIOSFODNN7EXAMPLE` 오탐 case, `read_file` window로 우회 불가, `search_text` literal·`regex: true` 양쪽에서 차단 파일 skip과 oracle 부재(차단 파일에 대한 `^.{n}x` 질의가 match 0), `edit_file`·`multi_edit_file` dry run·실제 edit 거부, `write_file` 교체 거부와 새 파일 허용, listing에는 보임, message와 audit에 값·host 경로 없음(`expectNoHostPath`), kill switch `off` 동작, startup 잘못된 값 거부. `pnpm e2e:tunnel`에 차단 case 하나.
+* test(security 영향이므로 red-first): pattern별 match·비 match(tail 길이 경계, 단어 중간 prefix), AWS 예제 값 오탐 case, `read_file` window로 우회 불가, `search_text` literal·`regex: true` 양쪽에서 차단 파일 skip과 oracle 부재(차단 파일에 대한 `^.{n}x` 질의가 match 0), `edit_file`·`multi_edit_file` dry run·실제 edit 거부, `write_file` 교체 거부와 새 파일 허용, listing에는 보임, message와 audit에 값·host 경로 없음(`expectNoHostPath`), kill switch `off` 동작, startup 잘못된 값 거부. `pnpm e2e:tunnel`에 차단 case 하나.
 * 문서: `docs/reference.md`(`PATH_BLOCKED` 설명에 내용 차단 추가, 환경 변수 표), `docs/security.md`(방어 계층에 내용 차단과 한계, 3.4의 M4 차이), `docs/implementation-notes.md`(새 M 항목, 3절 잔여 위험), README 특징 요약 확인. 채택 시 이 ADR의 Status를 바꾼다.
 
 ## 5. Deferred
@@ -159,5 +159,13 @@ M4(deny 항목은 listing에서 생략해 존재를 숨김)와는 일관되지 �
 * **Git history**: 5절대로 Git tool 출력에는 적용하지 않는다.
 * **1 bit 노출**: 파일이 막혔다는 사실 자체가 "이 파일에 credential 형식 값이 있다"를 알려 준다.
 * pattern matching은 backstop이지 경계가 아니다. 경계는 계속 workspace scope와 OS 권한이다(ADR-001 11절). secret이 든 파일은 workspace 밖에 두는 것이 1차 대응이고, 이 layer는 그 실수를 일부 잡을 뿐이다.
+
+## Amendment (2026-09-29): 채택과 구현 결정
+
+C를 채택해 구현했다. 3절에서 정하지 않았거나 구현하며 좁힌 사항은 implementation notes M71~M75에 있다.
+
+* 3.2절 unresolved였던 tail 길이는 gitleaks 규칙을 기준으로 정했고, Tavily는 1차 문서가 없어 보수적인 최소 길이를 택했다(M71).
+* `private_key`는 header만으로 match하지 않는다. header가 줄 끝에 있고 다음 줄에 base64가 이어져야 한다. PEM header 문자열을 다루는 코드가 막히지 않게 하려는 것이다(M71).
+* 3.3절과 4절의 AWS 예제 값은 원래 literal로 적혀 있었다. 그래서 이 repo를 workspace로 둔 agent가 이 ADR을 읽을 수 없게 되어, 채택할 때 값을 나눠 적거나 설명으로 바꿨다. 결정 내용은 바뀌지 않는다(M75).
 
 관련 문서: [ADR-001](001-architecture.md), [ADR-004](004-git.md), [implementation notes](../implementation-notes.md), [security](../security.md), [reference](../reference.md).

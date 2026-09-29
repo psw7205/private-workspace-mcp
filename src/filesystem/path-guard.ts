@@ -2,6 +2,7 @@ import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { fromFsError, WorkspaceError } from '../errors/errors.js';
+import { findCredentialPattern } from '../policy/content-patterns.js';
 import { isDenied as defaultIsDenied, type DenyMatcher } from '../policy/deny-list.js';
 
 export const MAX_PATH_LENGTH = 4096;
@@ -77,10 +78,14 @@ export interface WriteTarget extends ResolvedPath {
 
 /** The single gate between tool input and the filesystem (ADR-001 §10). */
 export class PathGuard {
-  /** @param root canonical absolute workspace root */
+  /**
+   * @param root canonical absolute workspace root
+   * @param scanContent block files whose text holds a credential (ADR-010); off only by operator choice
+   */
   constructor(
     private readonly root: string,
     readonly isDenied: DenyMatcher = defaultIsDenied,
+    private readonly scanContent = true,
   ) {}
 
   /** Resolves a path that must exist, following symlinks only while they stay inside. */
@@ -187,6 +192,22 @@ export class PathGuard {
   assertAllowed(absolutePath: string, relativePath: string): void {
     if (this.isDenied(this.assertInside(absolutePath, relativePath))) {
       throw new WorkspaceError('PATH_BLOCKED', `${relativePath} is blocked by the sensitive file policy`);
+    }
+  }
+
+  /** The id of a credential pattern in `text` when content scanning is on (ADR-010), else undefined. */
+  findBlockedContent(text: string): string | undefined {
+    return this.scanContent ? findCredentialPattern(text) : undefined;
+  }
+
+  /**
+   * Throws PATH_BLOCKED, with the same message as a denied name, if `text` holds a credential.
+   * Only the audit detail names the pattern; the value and its position are never reported.
+   */
+  assertContentAllowed(text: string, relativePath: string): void {
+    const pattern = this.findBlockedContent(text);
+    if (pattern !== undefined) {
+      throw new WorkspaceError('PATH_BLOCKED', `${relativePath} is blocked by the sensitive file policy`, `content:${pattern}`);
     }
   }
 

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, realpath, rm, stat } from 'node:fs/promises';
+import { readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,7 +8,7 @@ import { Client, type ClientOptions } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createFixture, expectNoHostPath, initRepository, type Fixture } from './helpers.js';
+import { createFixture, expectNoHostPath, FAKE_CREDENTIALS, initRepository, type Fixture } from './helpers.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // TEST_SERVER_ENTRY runs this suite against a built artifact (e.g. release/index.mjs) instead of the source.
@@ -740,6 +740,70 @@ describe('stdio server', () => {
     } finally {
       await session.client.close();
     }
+  });
+
+  describe('content scan (ADR-010)', () => {
+    let scanned: Fixture;
+    const key = FAKE_CREDENTIALS.github;
+
+    beforeAll(async () => {
+      scanned = await createFixture();
+      await writeFile(path.join(scanned.root, 'backup.json'), `{"API_KEY": "${key}"}\n`);
+    });
+
+    afterAll(async () => {
+      await scanned.cleanup();
+    });
+
+    it('blocks a file with credential content and audits only the pattern id', async () => {
+      const session = await connect({ WORKSPACE_ROOT: scanned.root });
+      try {
+        const read = await session.client.callTool({ name: 'read_file', arguments: { path: 'backup.json' } });
+        expect(parseText(read)).toEqual({
+          error: { code: 'PATH_BLOCKED', message: 'backup.json is blocked by the sensitive file policy' },
+        });
+        const search = parseText(await session.client.callTool({ name: 'search_text', arguments: { query: 'API_KEY' } }));
+        expect(search.matches).toEqual([]);
+        const listed = parseText(await session.client.callTool({ name: 'list_directory', arguments: { path: '.' } }));
+        expect(listed.entries.map((entry: { path: string }) => entry.path)).toContain('backup.json');
+
+        const records = session
+          .stderr()
+          .split('\n')
+          .filter((line) => line.startsWith('{'))
+          .map((line) => JSON.parse(line));
+        expect(records.find((record) => record.tool === 'read_file')).toMatchObject({
+          ok: false,
+          error_code: 'PATH_BLOCKED',
+          error_detail: 'content:github',
+        });
+        expect(records.find((record) => record.tool === 'search_text')).toMatchObject({ ok: true, content_blocked: 1 });
+        expect(records.find((record) => record.tool === 'list_directory')).not.toHaveProperty('content_blocked');
+        expect(session.stderr()).not.toContain(key);
+        expectNoHostPath(JSON.stringify(read), scanned);
+      } finally {
+        await session.client.close();
+      }
+    });
+
+    it('reads the file with WORKSPACE_CONTENT_SCAN=off', async () => {
+      const session = await connect({ WORKSPACE_ROOT: scanned.root, WORKSPACE_CONTENT_SCAN: 'off' });
+      try {
+        const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'backup.json' } }));
+        expect(read.content).toContain(key);
+      } finally {
+        await session.client.close();
+      }
+    });
+
+    it('--check reports the scan, and startup rejects other values', async () => {
+      expect((await runCli(['--check'], { WORKSPACE_ROOT: scanned.root })).stderr).toMatch(/^content scan: on$/m);
+      const off = await runCli(['--check'], { WORKSPACE_ROOT: scanned.root, WORKSPACE_CONTENT_SCAN: 'off' });
+      expect(off.stderr).toMatch(/^content scan: off$/m);
+      const invalid = await runCli([], { WORKSPACE_ROOT: scanned.root, WORKSPACE_CONTENT_SCAN: 'false' });
+      expect(invalid).toMatchObject({ code: 1, stdout: '' });
+      expect(invalid.stderr).toBe('private-workspace-mcp: invalid configuration: WORKSPACE_CONTENT_SCAN must be "on" or "off"\n');
+    });
   });
 
   it('is read-only unless read-write is configured', async () => {

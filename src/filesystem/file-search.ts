@@ -94,6 +94,8 @@ export interface SearchTextResult {
   scan_limit_reached: boolean;
   /** Bytes read from searched files, for the audit record only. */
   bytesRead: number;
+  /** Files skipped because their content holds a credential (ADR-010), for the audit record only. */
+  contentBlocked: number;
 }
 
 const MAX_MATCH_TEXT = 200;
@@ -111,8 +113,8 @@ const YIELD_INTERVAL_MS = 20;
 
 /**
  * Finds the first match of `query` on each line of the text files under `params.path`.
- * Files that read_file would reject (too large, binary, not UTF-8) or that cannot be read are
- * skipped. Neither mode backtracks: a literal query is escaped into a native regex only for case
+ * Files that read_file would reject (too large, binary, not UTF-8, credential content) or that
+ * cannot be read are skipped. Neither mode backtracks: a literal query is escaped into a native regex only for case
  * folding, and a regex query runs on re2js, whose matching is linear in the input.
  */
 export async function searchText(guard: PathGuard, options: SearchOptions, params: SearchTextParams): Promise<SearchTextResult> {
@@ -123,6 +125,7 @@ export async function searchText(guard: PathGuard, options: SearchOptions, param
   const matches: TextMatch[] = [];
   let filesSearched = 0;
   let bytesRead = 0;
+  let contentBlocked = 0;
   let truncated = false;
 
   search: for await (const file of searchWalk(guard, base, options, params.includeIgnored, stats)) {
@@ -133,6 +136,11 @@ export async function searchText(guard: PathGuard, options: SearchOptions, param
       bytesRead += bytes.length;
       text = decodeTextFile(bytes, file.relativePath);
     } catch {
+      continue;
+    }
+    // Skipped before matching, so neither the text nor whether a query matches it goes out.
+    if (guard.findBlockedContent(text) !== undefined) {
+      contentBlocked++;
       continue;
     }
     filesSearched++;
@@ -167,6 +175,7 @@ export async function searchText(guard: PathGuard, options: SearchOptions, param
     truncated: truncated || stats.scanLimitReached,
     scan_limit_reached: stats.scanLimitReached,
     bytesRead,
+    contentBlocked,
   };
 }
 

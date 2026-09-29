@@ -9,8 +9,12 @@
 - **workspace 고정**: root는 서버 설정(`WORKSPACE_ROOT` 또는 `WORKSPACE_ROOTS`)으로만 정하고 startup 시 realpath로 고정한다. MCP Roots는 쓰지 않는다. root가 사실상 sandbox 경계이므로 filesystem root, home directory, home의 상위 directory는 startup에서 거부한다. 여러 root는 서로 겹칠 수 없다. agent 전용 directory를 root로 쓴다.
 - **`PathGuard`**: workspace마다 하나다. 입력 문법 검사(`..`, 절대/drive/UNC 경로, Windows alias 거부) 후 realpath로 canonical 경로를 구해 containment를 판정한다. 문자열 prefix 비교는 쓰지 않는다.
 - **민감 파일 deny**: `.env`, `.env.*`, `*.pem`, `*.key`, `.ssh`, `.aws`, `.gnupg`, `.npmrc`, `.netrc`, `credentials*`, `secret*`, `.git`, `.git-credentials`, `service-account*.json`, `id_rsa*`, `id_ed25519*`, `*.tfstate`, `*.tfstate.*`, `.kube`, `kubeconfig*`, `.docker`, `.pypirc`, `*.p12`, `*.pfx`. 입력 경로와 canonical 경로 양쪽에 case-insensitive로 적용한다. 운영자는 추가만 할 수 있다(`WORKSPACE_EXTRA_DENY_PATTERNS`).
+- **내용 기반 차단** (ADR-010): 이름 deny는 `backup.json`, `notes.md`, DB dump처럼 평범한 이름의 파일에 든 secret을 막지 못한다. 그래서 파일 내용에 provider prefix가 있는 key나 private key가 있으면 파일 전체를 deny처럼 다룬다. 일부만 가리지 않는 이유는 두 가지다. 가린 내용을 model이 다시 쓰면 파일이 손상되고, match 여부 자체가 한 글자씩 값을 복원하는 oracle이 되기 때문이다. `read_file`·edit tool·기존 파일 교체는 `PATH_BLOCKED`, `search_text`는 match 전에 건너뛴다. 기본으로 켜져 있고 `WORKSPACE_CONTENT_SCAN=off`로만 끈다.
+  - 차단 파일은 `list_directory`·`find_files`에 보인다. deny 이름을 목록에서 숨기는 것과 다르다. listing마다 파일 내용을 읽지 않기 위한 의도한 차이다.
+  - prefix 없는 secret(비밀번호, connection string, AWS secret access key), base64 등으로 형식을 바꾼 key, Git history(`git_diff`·`git_show`·`git_log`)는 막지 못한다. 차단 자체가 "credential 형식 값이 있다"는 사실을 드러낸다. secret 파일은 workspace 밖에 두는 것이 1차 대응이고, 이 layer는 그 실수를 일부 잡을 뿐이다.
+  - 문서화된 예제 값(AWS 문서의 예제 access key id 등)도 실제 key와 형식이 같아 막힌다. 파일별 예외는 없다.
 - **안전한 write**: 기본 read-only. `WORKSPACE_ROOTS`면 `WORKSPACE_READ_WRITE`에 나열한 workspace만 쓸 수 있다(`WORKSPACE_READ_WRITE` 없이 `WORKSPACE_MODE=read-write`면 모든 workspace). 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
-- **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, edit dry run이면 `dry_run: true`, 성공 여부, 소요 시간, bytes, error code). 파일 내용과 secret은 기록하지 않는다.
+- **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, edit dry run이면 `dry_run: true`, 성공 여부, 소요 시간, bytes, error code, 내용 검사로 막히면 `error_detail`의 pattern id, `search_text`가 건너뛴 파일 수 `content_blocked`). 파일 내용과 secret은 기록하지 않는다.
 - **오류 비노출**: client에 가는 message에는 host 절대 경로와 Node error message를 넣지 않는다. 모르는 오류는 `INTERNAL_ERROR`로 바꾸고 상세는 audit log에만 남긴다.
 
 ## Git (opt-in)

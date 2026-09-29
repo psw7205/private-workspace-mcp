@@ -173,4 +173,5 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 | 서버 업그레이드 뒤에도 옛 tool 목록이 보임 | connector Refresh 후 새 대화를 시작한다 |
 | 한동안 되다가 ChatGPT 요청이 모두 실패 | MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 `tunnel-client`에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로 `tunnel-client`를 재시작한다(implementation notes 4절) |
 | 다른 profile의 tunnel로 연결됨 | `CONTROL_PLANE_TUNNEL_ID`가 export되어 profile의 `tunnel_id`를 덮어쓰고 있다. unset한다 |
+| 이름이 평범한 파일(`backup.json` 등)이 `PATH_BLOCKED` | 내용에 API key나 private key 형식 값이 있어 내용 검사(ADR-010)에 걸렸다. audit의 `error_detail`이 `content:<pattern id>`다. secret이면 파일을 workspace 밖으로 옮긴다. 문서의 예제 값 같은 오탐이면 `WORKSPACE_CONTENT_SCAN=off`로 끌 수 있지만 서버 전체에서 꺼진다 |
 | startup이 exit 1로 끝남 | stderr의 이유를 본다. `--check`로 같은 검증을 반복할 수 있다 |

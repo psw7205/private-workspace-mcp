@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import type { Limits, WorkspaceMode } from '../config/config.js';
 import { fromFsError, WorkspaceError } from '../errors/errors.js';
-import { readRegularFile } from './file-reader.js';
+import { decodeTextFile, readRegularFile } from './file-reader.js';
 import type { PathGuard } from './path-guard.js';
 import { computeRevision } from './revision.js';
 
@@ -96,6 +96,7 @@ export async function writeTextFile(
       }
       // Bounded by the read limit: read_file never returns a revision for a larger file.
       const current = await readRegularFile(absolutePath, relativePath, options.maxReadBytes);
+      assertReplaceable(guard, current.bytes, relativePath);
       if (computeRevision(current.bytes) !== params.expectedRevision) {
         throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} changed since it was read; read it again and retry`);
       }
@@ -154,6 +155,20 @@ export async function writeTextFile(
       revision: computeRevision(bytes),
     };
   });
+}
+
+/**
+ * Refuses to replace a text file whose current content holds a credential (ADR-010 §3.1). Binary
+ * and non-UTF-8 files send no content out and stay replaceable, as before.
+ */
+function assertReplaceable(guard: PathGuard, bytes: Buffer, relativePath: string): void {
+  let text: string;
+  try {
+    text = decodeTextFile(bytes, relativePath);
+  } catch {
+    return;
+  }
+  guard.assertContentAllowed(text, relativePath);
 }
 
 async function createMissingDirectories(ancestor: string, names: string[], relativePath: string): Promise<void> {

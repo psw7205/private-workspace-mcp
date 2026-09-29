@@ -275,6 +275,7 @@ describe('searchText', () => {
       truncated: false,
       scan_limit_reached: false,
       bytesRead: expect.any(Number),
+      contentBlocked: 0,
     });
   });
 
@@ -302,6 +303,7 @@ describe('searchText', () => {
       truncated: false,
       scan_limit_reached: false,
       bytesRead: expect.any(Number),
+      contentBlocked: 0,
     });
   });
 

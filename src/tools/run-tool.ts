@@ -26,6 +26,8 @@ export interface ToolOutcome<T> {
   bytesWritten?: number;
   /** Recorded as `truncated: true` in the audit record when set (ADR-004 §2.8). */
   truncated?: boolean;
+  /** Recorded as `content_blocked` in the audit record when above 0 (ADR-010 §3.5). */
+  contentBlocked?: number;
 }
 
 /**
@@ -74,6 +76,7 @@ export async function runTool<T extends Record<string, unknown>>(
       ...(outcome.bytesRead !== undefined ? { bytes_read: outcome.bytesRead } : {}),
       ...(outcome.bytesWritten !== undefined ? { bytes_written: outcome.bytesWritten } : {}),
       ...(outcome.truncated ? { truncated: true as const } : {}),
+      ...(outcome.contentBlocked ? { content_blocked: outcome.contentBlocked } : {}),
     });
     return {
       content: [{ type: 'text', text: JSON.stringify(outcome.result) }],

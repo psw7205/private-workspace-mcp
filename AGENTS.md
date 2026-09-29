@@ -68,6 +68,7 @@ pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-clien
 - 오류 경로를 추가하면 host 경로 비노출(`expectNoHostPath`)도 확인한다.
 - Windows 호환: directory symlink에는 `'dir'` type을 준다. POSIX signal, FIFO, file mode test는 `win32`에서 건너뛴다.
 - tracked 파일(test 포함)에 `/Users/...` 같은 로컬 절대 경로를 넣지 않는다.
+- tracked 파일에 credential 형식 값(`AKIA…`, `ghp_…`, PEM private key 등)을 literal로 넣지 않는다. 그 파일은 내용 검사(ADR-010)에 걸려 이 repo를 workspace로 둔 agent가 읽을 수 없게 되고, `test/content-patterns.test.ts`가 실패한다. test 값은 `test/helpers.ts`의 `FAKE_CREDENTIALS`처럼 runtime에 이어 붙여 만든다(M75).
 
 ## 함정
 
@@ -95,6 +96,7 @@ src/
   tools/                   tool 정의(schema, annotation)와 공통 runTool(timeout, error 변환, audit)
   filesystem/              PathGuard, reader, lister, writer, editor, 검색(walker, glob, ignore 파일), revision
   policy/deny-list.ts      민감 파일 deny pattern
+  policy/content-patterns.ts  내용 기반 credential pattern (ADR-010)
   git/                     Git read-only runner(hardened env·인자, process group), repository·config·rev 검사, status/diff/log/show (ADR-004)
   config/config.ts         env 파싱과 검증
   audit/audit-log.ts       stderr/file audit sink

@@ -44,6 +44,8 @@ export interface Config {
   denyPatterns: string[];
   /** Set by `WORKSPACE_GIT=read-only`: register the read-only Git tools (ADR-004 §2.9). */
   git: boolean;
+  /** Block files whose content holds a credential (ADR-010); only `WORKSPACE_CONTENT_SCAN=off` clears it. */
+  contentScan: boolean;
 }
 
 // setTimeout clamps larger delays to 1 ms, which would time out every tool call.
@@ -91,7 +93,11 @@ export async function loadConfig(env: Record<string, string | undefined>): Promi
   const gitSetting = env.WORKSPACE_GIT ?? '';
   if (gitSetting !== '' && gitSetting !== 'read-only') throw new Error('WORKSPACE_GIT must be "read-only" or unset');
 
-  return { workspaces, multi, limits, audit, denyPatterns, git: gitSetting === 'read-only' };
+  // Like WORKSPACE_GIT, a typo fails startup instead of silently leaving the scan on or off.
+  const contentScan = env.WORKSPACE_CONTENT_SCAN || 'on';
+  if (contentScan !== 'on' && contentScan !== 'off') throw new Error('WORKSPACE_CONTENT_SCAN must be "on" or "off"');
+
+  return { workspaces, multi, limits, audit, denyPatterns, git: gitSetting === 'read-only', contentScan: contentScan === 'on' };
 }
 
 type WorkspaceRoot = Omit<Workspace, 'mode'>;

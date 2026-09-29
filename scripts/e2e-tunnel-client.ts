@@ -111,11 +111,13 @@ async function exercise(mcpUrl: string, versionNegotiation: ClientOptions['versi
     ['../outside.txt', 'PATH_OUTSIDE_WORKSPACE'],
     ['escape/private.txt', 'PATH_OUTSIDE_WORKSPACE'],
     ['.env', 'PATH_BLOCKED'],
+    // Denied by content, not by name (ADR-010).
+    ['backup.json', 'PATH_BLOCKED'],
   ] as const) {
     const result = await client.callTool({ name: 'read_file', arguments: { path: target } });
     assert.equal(text(result).error.code, code);
   }
-  log(`${label}: escape and deny cases rejected`);
+  log(`${label}: escape, deny, and content scan cases rejected`);
   await client.close();
 }
 
@@ -222,6 +224,9 @@ async function main(): Promise<void> {
   await mkdir(outside);
   await writeFile(path.join(workspace, 'README.md'), '# e2e\n');
   await writeFile(path.join(workspace, '.env'), 'SECRET=1\n');
+  // Assembled at runtime so this script does not itself trip the content scan.
+  const contentKey = 'gh' + 'p_' + 'E2e0'.repeat(9);
+  await writeFile(path.join(workspace, 'backup.json'), `{"API_KEY": "${contentKey}"}\n`);
   await writeFile(path.join(outside, 'private.txt'), 'outside\n');
   execFileSync('ln', ['-s', outside, path.join(workspace, 'escape')]);
 
@@ -235,6 +240,8 @@ async function main(): Promise<void> {
     await exercise(legacy.mcpUrl, undefined, 'legacy');
     assert.match(legacy.stderr(), /"event":"tool_call"/, 'audit records reach tunnel-client stderr');
     assert.ok(!legacy.stderr().includes('SECRET=1'), 'file content must not be logged');
+    assert.match(legacy.stderr(), /"error_detail":"content:github"/, 'audit records the content pattern id');
+    assert.ok(!legacy.stderr().includes(contentKey), 'the blocked credential must not be logged');
     await stopAndCheckChild(legacy.proxy, legacy.childPid, 'SIGTERM');
 
     const modern = await startProxy({ WORKSPACE_ROOT: workspace, WORKSPACE_MODE: 'read-write' }, scratch, 'modern');

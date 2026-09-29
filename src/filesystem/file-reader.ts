@@ -42,6 +42,8 @@ export async function readTextFile(
   const { relativePath, absolutePath } = await guard.resolveExisting(params.path);
   const { bytes } = await readRegularFile(absolutePath, relativePath, limits.maxReadBytes);
   const text = decodeTextFile(bytes, relativePath);
+  // The whole text, so no window of lines can return part of a blocked file.
+  guard.assertContentAllowed(text, relativePath);
   const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const startLine = params.startLine ?? 1;
   const window = lines.slice(startLine - 1, startLine - 1 + (params.maxLines ?? DEFAULT_MAX_LINES));

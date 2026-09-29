@@ -20,6 +20,8 @@ export interface AuditRecord {
   bytes_written?: number;
   /** Set when a Git tool cut its output at the read limit (ADR-004 §2.8). */
   truncated?: true;
+  /** Files search_text skipped for credential content (ADR-010 §3.5); a count, never paths. Set when above 0. */
+  content_blocked?: number;
   error_code?: ErrorCode;
   /**
    * Node.js error code (e.g. `EIO`) behind an INTERNAL_ERROR, or a Git tool's `exit:<n>`,

@@ -24,11 +24,13 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | `read_file` | UTF-8 텍스트 파일. `start_line`/`max_lines`로 line pagination. 파일 전체 기준 `revision`(`sha256:…`) 반환 |
 | `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성 |
 | `find_files` | `path`(기본 `.`) 아래를 depth 제한 없이 glob으로 검색. 패턴은 `path` 기준 상대 경로에 적용(`**/*.ts`). `*`, `?`, `**`, `{a,b}`만 특수 문자(패턴 256자까지)이고 대소문자를 구분. `.`으로 시작하는 이름은 패턴에 명시해야 맞음. `.gitignore`/`.ignore` 대상은 `include_ignored: true`가 아니면 제외. 결과는 파일 경로와 크기 |
-| `search_text` | `path` 아래 UTF-8 텍스트 파일에서 literal 문자열 검색. `regex: true`면 `query`를 RE2 문법 regex로 검색(선형 시간 엔진 `re2js`, backreference·lookaround 없음, `\d`·`\w`·`\b`는 ASCII, 줄 단위라 `^`·`$`는 줄 경계, 256자 이하, 너무 복잡한 패턴은 `INVALID_PATH`). 줄마다 첫 match의 경로·줄·열·줄 내용 반환. `glob`, `case_sensitive`(기본 false), `include_ignored`, `limit`. binary·non-UTF-8·read limit 초과 파일은 건너뜀 |
+| `search_text` | `path` 아래 UTF-8 텍스트 파일에서 literal 문자열 검색. `regex: true`면 `query`를 RE2 문법 regex로 검색(선형 시간 엔진 `re2js`, backreference·lookaround 없음, `\d`·`\w`·`\b`는 ASCII, 줄 단위라 `^`·`$`는 줄 경계, 256자 이하, 너무 복잡한 패턴은 `INVALID_PATH`). 줄마다 첫 match의 경로·줄·열·줄 내용 반환. `glob`, `case_sensitive`(기본 false), `include_ignored`, `limit`. binary·non-UTF-8·read limit 초과 파일과 내용 검사에 걸린 파일은 건너뜀 |
 | `edit_file` | 기존 파일의 exact-match 문자열 교체(ADR-002). `old_string`은 한 번만 나와야 하고 여러 번이면 `replace_all`. `expected_revision` 필수, 새 `revision` 반환. `dry_run: true`면 모든 검사만 하고 쓰지 않은 채 적용 시의 `revision`과 unified `diff`(context 3줄, 64 KiB에서 자르고 `diff_truncated`)를 반환 |
 | `multi_edit_file` | 한 파일에 `edits` 배열(최대 100개, 각 항목은 `edit_file`과 같은 `old_string`/`new_string`/`replace_all`)을 순서대로 적용하고 한 번에 쓴다. 뒤 edit는 앞 edit의 결과에 match한다. 하나라도 실패하면 파일은 바뀌지 않고 오류 message가 `edits[i]`로 실패한 edit를 가리킴. 전체·edit별 교체 횟수와 새 `revision` 반환. `dry_run`은 `edit_file`과 같음 |
 
 쓰기 tool(`write_file`, `edit_file`, `multi_edit_file`)은 read-write workspace에서만 동작한다. 나머지는 mode와 무관하다.
+
+내용 검사(ADR-010): 파일 이름이 deny 목록에 없어도 내용에 알려진 형식의 credential(Anthropic·OpenAI·GitHub·GitLab·Slack·Tavily key, Google API key, AWS access key id, PEM·OpenSSH private key)이 있으면 deny 이름과 같게 다룬다. `read_file`, `edit_file`·`multi_edit_file`(`dry_run` 포함), 기존 파일을 교체하는 `write_file`은 `PATH_BLOCKED`를 받고, `search_text`는 그 파일을 건너뛴다. `list_directory`·`find_files`에는 그대로 보인다. binary·non-UTF-8·read limit 초과 파일과 새로 쓰는 content는 검사하지 않는다. `WORKSPACE_CONTENT_SCAN=off`로 끌 수 있다.
 
 ## Git tools (opt-in)
 
@@ -53,7 +55,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | code | 의미 |
 |------|------|
 | `PATH_OUTSIDE_WORKSPACE` | 절대 경로, `..`, symlink 등으로 workspace 밖을 가리킴 |
-| `PATH_BLOCKED` | 민감 파일 deny pattern에 걸림 |
+| `PATH_BLOCKED` | 민감 파일 deny pattern에 걸림, 또는 파일 내용에 credential 형식 값이 있음(내용 검사). message는 같고 audit `error_detail`만 `content:<pattern id>`로 구별된다 |
 | `INVALID_PATH` | 경로 문법 오류, 잘못되거나 상한을 넘는 glob·regex 패턴(`find_files`·`search_text`), symlink 대상에 쓰기, 깨진 symlink 아래에 쓰기 |
 | `FILE_NOT_FOUND` / `NOT_A_FILE` / `NOT_A_DIRECTORY` | 대상 상태 불일치 |
 | `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일, lone surrogate가 든 write content나 `old_string`/`new_string` |
@@ -85,6 +87,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | `WORKSPACE_AUDIT_LOG_MAX_BYTES` | `10485760` | 이 크기를 넘기 전에 `<path>.1`로 rotate (backup 1개) |
 | `WORKSPACE_EXTRA_DENY_PATTERNS` | (없음) | 쉼표로 구분한 path segment glob(`*`만 지원). 기본 deny 목록에 추가만 가능 |
 | `WORKSPACE_GIT` | (없음 → 꺼짐) | `read-only`면 Git tool 4개를 등록한다. 다른 값은 거부. 켜져 있는데 workspace 밖 `PATH`에서 git을 찾지 못하거나 git이 `--attr-source` 등 필요한 인자를 지원하지 않으면 startup 실패. `--check`가 찾은 git의 version과 경로를 보여준다 |
+| `WORKSPACE_CONTENT_SCAN` | `on` | `off`면 내용 검사를 끈다. 빈 값은 `on`, 그 밖의 값은 거부. 오탐 파일을 읽어야 할 때 쓰는 서버 전체 kill switch이고 파일별 예외는 없다 |
 
 - 정수 설정은 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다.
 - 값이 잘못되면 stderr에 이유를 출력하고 exit code 1로 종료한다(fail closed).
@@ -95,7 +98,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | 인자 | 동작 |
 |------|------|
 | (없음) | stdio MCP 서버로 대기 |
-| `--check` | 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. audit file은 만들지 않는다 |
+| `--check` | 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처, 내용 검사 여부를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. audit file은 만들지 않는다 |
 | `--version` | version 출력 |
 
 그 밖의 인자를 주면 usage를 내고 exit 2로 끝난다.

@@ -156,3 +156,21 @@ export async function initRepository(fixture: Fixture): Promise<void> {
   runGit(fixture.root, ['add', '-A']);
   runGit(fixture.root, ['commit', '-q', '-m', 'initial']);
 }
+
+/**
+ * Credential-shaped values for the content scan (ADR-010), one per pattern id. Each is assembled
+ * at runtime so no source file contains one and this repository stays readable through the
+ * server it builds (ADR-010 §3.3).
+ */
+export const FAKE_CREDENTIALS = {
+  anthropic: 'sk-' + 'ant-api03-' + 'a1B2c3D4_-'.repeat(9),
+  openai: 'sk-' + 'proj-' + 'Ab1_-'.repeat(10),
+  github: 'gh' + 'p_' + 'A1b2'.repeat(9),
+  gitlab: 'gl' + 'pat-' + 'Ab1-'.repeat(5),
+  slack: 'xo' + 'xb-' + '1234567890-' + '1234567890123-' + 'AbCdEfGhIjKlMnOpQrStUvWx',
+  aws_access_key_id: 'AK' + 'IA' + 'Z7Q2'.repeat(4),
+  google_api_key: 'AI' + 'za' + 'Sy' + 'A1b2c3d4e5'.repeat(4).slice(0, 33),
+  tavily: 'tv' + 'ly-' + 'A1b2'.repeat(8),
+  private_key:
+    '-----BEGIN ' + 'OPENSSH PRIVATE KEY-----\n' + 'b3BlbnNzaC1rZXktdjEAAAAA'.repeat(3) + '\n-----END OPENSSH PRIVATE KEY-----\n',
+} as const;

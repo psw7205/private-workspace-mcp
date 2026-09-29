@@ -197,11 +197,13 @@ async function applyEdits(
   });
 
   const { bytes } = await readRegularFile(absolutePath, relativePath, options.maxReadBytes);
+  const original = decodeTextFile(bytes, relativePath);
+  // Before the revision and match checks: their outcomes and the dry run diff reveal content (ADR-010).
+  guard.assertContentAllowed(original, relativePath);
   if (computeRevision(bytes) !== params.expectedRevision) {
     throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} changed since it was read; read it again and retry`);
   }
 
-  const original = decodeTextFile(bytes, relativePath);
   let content = original;
   const tracker = track ? new EditTracker(original.length) : undefined;
   const counts: number[] = [];

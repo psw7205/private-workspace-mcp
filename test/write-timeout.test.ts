@@ -61,6 +61,7 @@ describe('write tools after TIMEOUT (M43)', () => {
       audit: { maxBytes: 1024 },
       denyPatterns: [],
       git: false,
+      contentScan: true,
     };
     const records: AuditRecord[] = [];
     const deps: ToolDeps = {

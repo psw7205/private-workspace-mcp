@@ -14,7 +14,7 @@ OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 실행하는 std
 ## 특징
 
 - **workspace 밖으로 못 나감**: root는 서버 설정으로만 정하고 realpath로 고정한다. `..`, 절대 경로, symlink 탈출은 `PATH_OUTSIDE_WORKSPACE`로 거부한다.
-- **민감 파일 차단**: `.env`, `*.pem`, `.ssh`, `credentials*` 등은 읽기·쓰기가 `PATH_BLOCKED`로 거부되고, 목록·검색·Git 결과에서는 존재 여부도 드러내지 않고 빠진다. 기본 deny 목록은 설정으로 지울 수 없다.
+- **민감 파일 차단**: `.env`, `*.pem`, `.ssh`, `credentials*` 등은 읽기·쓰기가 `PATH_BLOCKED`로 거부되고, 목록·검색·Git 결과에서는 존재 여부도 드러내지 않고 빠진다. 기본 deny 목록은 설정으로 지울 수 없다. 이름이 평범해도 내용에 API key나 private key 형식 값이 든 파일은 읽기·편집·검색에서 막힌다.
 - **기본 read-only, 쓰기는 revision 기반**: 기존 파일은 읽을 때 받은 `revision`이 맞아야만 atomic하게 교체한다. 그 사이 사람이 파일을 고쳤다면 `REVISION_CONFLICT`로 막는다.
 - **적용 전 diff 확인**: `edit_file`·`multi_edit_file`의 `dry_run`은 쓰지 않고 unified diff만 돌려준다.
 - **여러 repo를 tunnel 하나로**: `WORKSPACE_ROOTS=api=…,web=…`로 띄우고 repo별로 read-write를 따로 줄 수 있다.

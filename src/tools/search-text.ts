@@ -58,12 +58,12 @@ export function registerSearchText(server: McpServer, deps: ToolDeps): void {
     },
     async ({ workspace, path, query, regex, glob, case_sensitive, include_ignored, limit }, ctx) =>
       runTool({ tool: 'search_text', workspace, path, requestId: ctx.mcpReq.id, timeoutMs: requestTimeoutMs, audit }, async (signal) => {
-        const { bytesRead, ...result } = await searchText(
+        const { bytesRead, contentBlocked, ...result } = await searchText(
           guardFor(deps, workspace),
           { maxSearchFiles, maxReadBytes, signal },
           { path, query, glob, caseSensitive: case_sensitive, includeIgnored: include_ignored, limit, regex },
         );
-        return { result, bytesRead };
+        return { result, bytesRead, contentBlocked };
       }),
   );
 }

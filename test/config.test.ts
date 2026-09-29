@@ -39,7 +39,19 @@ describe('loadConfig', () => {
       audit: { maxBytes: 10_485_760 },
       denyPatterns: [...DEFAULT_DENY_PATTERNS],
       git: false,
+      contentScan: true,
     });
+  });
+
+  it('turns the content scan off only for WORKSPACE_CONTENT_SCAN=off (ADR-010)', async () => {
+    for (const [value, expected] of [['on', true], ['off', false], ['', true]] as const) {
+      expect((await loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_CONTENT_SCAN: value })).contentScan, value).toBe(expected);
+    }
+    for (const value of ['false', '0', 'OFF', ' off', 'disabled']) {
+      await expect(loadConfig({ WORKSPACE_ROOT: workspace, WORKSPACE_CONTENT_SCAN: value }), value).rejects.toThrow(
+        'WORKSPACE_CONTENT_SCAN must be "on" or "off"',
+      );
+    }
   });
 
   it('turns the Git tools on only for WORKSPACE_GIT=read-only (M52)', async () => {

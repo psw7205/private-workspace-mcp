@@ -27,7 +27,7 @@ export function createServerFactory(config: Config, audit: AuditSink = stderrAud
   if (config.git !== (git !== undefined)) throw new Error('the Git runner must be given exactly when WORKSPACE_GIT is set');
   const isDenied = createDenyMatcher(config.denyPatterns);
   const workspaces = new Map(
-    config.workspaces.map(({ name, root, mode }) => [name, { guard: new PathGuard(root, isDenied), mode, root }]),
+    config.workspaces.map(({ name, root, mode }) => [name, { guard: new PathGuard(root, isDenied, config.contentScan), mode, root }]),
   );
   const deps = { config, workspaces, audit };
   return () => {
