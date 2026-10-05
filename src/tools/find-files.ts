@@ -24,8 +24,9 @@ export function registerFindFiles(server: McpServer, deps: ToolDeps): void {
       description:
         'Find files by glob under a workspace directory, at any depth. The pattern is matched against paths relative to `path`: ' +
         '`*` stays within one segment and `**` spans segments, so use `**/*.ts` for every .ts file and `*.ts` for the top level only. ' +
-        '`?` matches one character and `{a,b}` lists alternatives (`{` and `}` are reserved for this); ' +
-        'other characters are literal, matching is case-sensitive, and patterns are at most 256 characters. ' +
+        '`?` matches one character, `[abc]`, `[a-z]`, and `[!a]` match one character of a set, and `{a,b}` lists alternatives; ' +
+        '`\\` makes the next character literal (for example `\\{draft\\}.md`). ' +
+        'Other characters are literal, matching is case-sensitive, and patterns are at most 256 characters. ' +
         'Names starting with "." match only when the pattern names them (for example `.github/**/*.yml`). ' +
         'Files ignored by `.gitignore` or `.ignore` are skipped unless `include_ignored` is true. ' +
         'Symlinks are not followed and sensitive files are always omitted. ' +

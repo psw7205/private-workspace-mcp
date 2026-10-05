@@ -41,7 +41,7 @@ export function registerSearchText(server: McpServer, deps: ToolDeps): void {
           .max(1024)
           .regex(/^[^\r\n]*$/, 'query must be a single line')
           .describe('Text to find within one line; an RE2 regex when `regex` is true'),
-        glob: z.string().min(1).max(MAX_GLOB_LENGTH).optional().describe('Only search files whose path relative to `path` matches this glob'),
+        glob: z.string().min(1).max(MAX_GLOB_LENGTH).optional().describe('Only search files whose path relative to `path` matches this glob (`find_files` syntax)'),
         regex: z.boolean().default(false).describe('Interpret `query` as an RE2 regular expression'),
         case_sensitive: z.boolean().default(false),
         include_ignored: z.boolean().default(false).describe('Also search files ignored by .gitignore or .ignore'),

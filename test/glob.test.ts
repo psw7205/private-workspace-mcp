@@ -25,7 +25,41 @@ describe('compileGlob', () => {
     ['src/*.{ts,js}', 'src/a.md', false],
     ['{src,test}/**/*.ts', 'test/a.ts', true],
     ['./src/a.ts', 'src/a.ts', true],
-    ['a[1].ts', 'a[1].ts', true],
+    ['a[12].ts', 'a1.ts', true],
+    ['a[12].ts', 'a3.ts', false],
+    ['a[12].ts', 'a[12].ts', false],
+    ['[a-c]x', 'bx', true],
+    ['[a-c]x', 'dx', false],
+    ['[!a-c]x', 'dx', true],
+    ['[^a-c]x', 'bx', false],
+    ['[]a]', ']', true],
+    ['[]a]', 'a', true],
+    ['[!]]', 'a', true],
+    ['[!]]', ']', false],
+    ['[a-]', '-', true],
+    ['[-a]', '-', true],
+    ['[\\]]', ']', true],
+    ['[{]x', '{x', true],
+    ['{[ab],c}x', 'bx', true],
+    ['{[,]x,y}', ',x', true],
+    ['a]b', 'a]b', true],
+    ['\\{a,b\\}.txt', '{a,b}.txt', true],
+    ['\\{a,b\\}.txt', 'a.txt', false],
+    ['\\*', '*', true],
+    ['\\*', 'a', false],
+    ['a\\?', 'a?', true],
+    ['a\\?', 'ab', false],
+    ['\\\\', '\\', true],
+    ['\\[1\\].ts', '[1].ts', true],
+    ['a\\b', 'ab', true],
+    ['{a\\,b,c}', 'a,b', true],
+    ['{a\\,b,c}', 'c', true],
+    ['{a\\,b,c}', 'a', false],
+    ['[.]env', '.env', false],
+    ['\\.env', '.env', true],
+    ['?.txt', '\u{1F600}.txt', true],
+    ['[\u{1F600}]', '\u{1F600}', true],
+    ['[가-힣]', '한', true],
     ['+(a|b).ts', '+(a|b).ts', true],
     ['{1..3}.txt', '2.txt', false],
     ['{1..3}.txt', '1..3.txt', true],
@@ -33,7 +67,20 @@ describe('compileGlob', () => {
     expect(compileGlob(pattern)(candidate)).toBe(expected);
   });
 
-  it.each(['{a,{b,c}}', '{a,b', 'a}b{'.repeat(1), '{a,b}'.repeat(7), 'a'.repeat(257)])('rejects %j', (pattern) => {
+  it.each([
+    '{a,{b,c}}',
+    '{a,b',
+    'a}b{',
+    '{a,b}'.repeat(7),
+    'a'.repeat(257),
+    'a[b',
+    '[!]',
+    '[z-a]',
+    '[a/b]',
+    'a\\',
+    'a\\/b',
+    '{a,b\\}',
+  ])('rejects %j', (pattern) => {
     expect(() => compileGlob(pattern)).toThrow(WorkspaceError);
   });
 
@@ -43,6 +90,11 @@ describe('compileGlob', () => {
     ['+(a|aa)+(a|aa)+(a|aa)+(a|aa)+(a|aa)b', 'a'.repeat(40)],
     [`${'*a'.repeat(127)}b`, 'a'.repeat(250)],
     [`${'**/a/'.repeat(50)}b`, `${'a/'.repeat(60)}c`],
+    [`${'*[a-z]'.repeat(42)}!`, 'a'.repeat(250)],
+    [
+      `**/${'*[!b]'.repeat(10)}{${Array.from({ length: 48 }, (_, index) => `[${String.fromCharCode(0x4e00 + index)}]`).join(',')}}`,
+      Array(16).fill('a'.repeat(255)).join('/'),
+    ],
     // Worst cases found in review: many wildcards, 64 alternatives, adversarial long names.
     [
       `**/*${'?'.repeat(40)}{${Array.from({ length: 64 }, (_, index) => String.fromCharCode(0x4e00 + index)).join(',')}}`.slice(0, 256),

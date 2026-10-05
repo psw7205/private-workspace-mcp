@@ -126,6 +126,24 @@ describe('findFiles', () => {
   });
 });
 
+describe('findFiles with glob metacharacters in names', () => {
+  it('finds names with braces and brackets through escapes and classes', async () => {
+    const fixture = await createFixture();
+    try {
+      const guard = new PathGuard(fixture.realRoot);
+      await mkdir(path.join(fixture.root, 'notes'));
+      for (const name of ['{draft}.md', '[1].md', '1.md', '2.md']) await writeFile(path.join(fixture.root, 'notes', name), '');
+      const find = async (pattern: string) =>
+        (await findFiles(guard, options, { path: 'notes', pattern, limit: 100, includeIgnored: false })).files.map((file) => file.path);
+      expect(await find('\\{draft\\}.md')).toEqual(['notes/{draft}.md']);
+      expect(await find('\\[1\\].md')).toEqual(['notes/[1].md']);
+      expect(await find('[12].md')).toEqual(['notes/1.md', 'notes/2.md']);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+});
+
 describe('findFiles with ignore files', () => {
   let fixture: Fixture;
   let guard: PathGuard;
