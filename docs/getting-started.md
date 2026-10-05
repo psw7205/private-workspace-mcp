@@ -227,7 +227,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 - `<repo>`는 `pnpm install`과 `pnpm build`를 마친 이 repo다.
 - Linux host에서는 `-u`로 준 uid가 `<project>`의 파일을 읽고 쓸 수 있어야 하고, 새 파일은 그 uid 소유로 생긴다(Docker Desktop for Mac은 host 사용자로 매핑한다).
 - `WORKSPACE_ROOTS`를 쓰면 repo마다 `-v <repo-a>:/workspaces/api`처럼 mount하고 `-e WORKSPACE_ROOTS=api=/workspaces/api,web=/workspaces/web`을 준다.
-- `docker run` 단독 stdio 호출은 확인했지만 `tunnel-client` 경유는 아직 확인하지 않았다.
+- `tunnel-client`가 끝나면(SIGKILL 포함) `docker run`의 stdin이 닫혀 서버가 종료되고 `--rm` container도 지워진다. `docker ps -a`에 남은 container가 없는지로 확인한다.
 
 ## 문제 해결
 
