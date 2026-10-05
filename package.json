@@ -25,17 +25,17 @@
     "install:local": "node --import tsx scripts/install-local.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.1.0",
     "ignore": "^7.0.10",
     "re2js": "^2.8.6",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@types/node": "^26.6.2",
+    "@modelcontextprotocol/client": "^2.1.0",
+    "@types/node": "^26.6.3",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "~7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.2"
   }
 }
