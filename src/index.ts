@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
-import { createAuditSink } from './audit/audit-log.js';
+import { assertAuditLogWritable, createAuditSink } from './audit/audit-log.js';
 import { describeConfig, parseCli, USAGE } from './cli.js';
 import { loadConfig } from './config/config.js';
 import { detectGit, GitRunner, type GitInstallation } from './git/runner.js';
@@ -27,6 +27,8 @@ async function main(): Promise<void> {
     config = await loadConfig(process.env);
     // Fail closed when Git was asked for but is missing or too old (ADR-004 §2.9).
     if (config.git) git = await detectGit(config.workspaces.map(({ root }) => root));
+    // Serving falls back to stderr when the audit file cannot be written; --check reports it instead (M79).
+    if (command === 'check' && config.audit.path !== undefined) await assertAuditLogWritable(config.audit.path);
   } catch (error) {
     console.error(`${SERVER_NAME}: invalid configuration: ${(error as Error).message}`);
     process.exitCode = 1;

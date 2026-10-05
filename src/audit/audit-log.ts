@@ -1,4 +1,6 @@
-import { appendFileSync, renameSync, statSync } from 'node:fs';
+import { appendFileSync, constants, renameSync, statSync } from 'node:fs';
+import { access } from 'node:fs/promises';
+import path from 'node:path';
 
 import type { ErrorCode } from '../errors/errors.js';
 
@@ -56,6 +58,21 @@ export function createFileAuditSink(file: string, maxBytes: number): AuditSink {
       stderrAuditSink(record);
     }
   };
+}
+
+/**
+ * Fails when the sink above could not write `file`, without creating it. Rotation renames
+ * the file and the first write creates it, so the parent directory must always be writable.
+ */
+export async function assertAuditLogWritable(file: string): Promise<void> {
+  const notWritable = (subject: string, error: unknown) =>
+    new Error(`${subject} is not writable (${(error as NodeJS.ErrnoException).code ?? 'unknown'})`);
+  await access(path.dirname(file), constants.W_OK | constants.X_OK).catch((error: unknown) => {
+    throw notWritable('WORKSPACE_AUDIT_LOG parent directory', error);
+  });
+  await access(file, constants.W_OK).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw notWritable('WORKSPACE_AUDIT_LOG', error);
+  });
 }
 
 export function createAuditSink(config: { path?: string; maxBytes: number }): AuditSink {

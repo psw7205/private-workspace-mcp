@@ -73,7 +73,7 @@ $(mise which node) "$DIR/current/index.mjs" --version
 
 ## 2. 설정 확인
 
-profile에 넣을 env와 entry 그대로 `--check`를 실행한다. 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. audit file은 만들지 않는다.
+profile에 넣을 env와 entry 그대로 `--check`를 실행한다. 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. audit file을 지정했다면 그 파일과 부모 directory의 쓰기 권한도 확인한다. audit file은 만들지 않는다.
 
 ```sh
 env WORKSPACE_ROOT=<project> WORKSPACE_MODE=read-write WORKSPACE_AUDIT_LOG=<audit-dir>/audit.jsonl $(mise which node) <entry> --check

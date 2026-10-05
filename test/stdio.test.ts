@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -878,6 +878,38 @@ describe('stdio server', () => {
       expect(checked.stderr).toBe(started.stderr);
       expect(checked.stderr).toBe('private-workspace-mcp: invalid configuration: WORKSPACE_READ_WRITE requires WORKSPACE_ROOTS; use WORKSPACE_MODE with WORKSPACE_ROOT\n');
     });
+
+    // Permission bits do not restrict root, and Windows access() ignores ACLs.
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      '--check fails when the audit file or its directory is not writable, without creating it',
+      async () => {
+        const dir = path.join(fixture.outside, 'audit-ro');
+        await mkdir(dir);
+        const existing = path.join(fixture.outside, 'audit-ro.jsonl');
+        await writeFile(existing, '');
+        await chmod(existing, 0o400);
+        await chmod(dir, 0o500);
+        try {
+          const inDir = await runCli(['--check'], { WORKSPACE_ROOT: fixture.root, WORKSPACE_AUDIT_LOG: path.join(dir, 'audit.jsonl') });
+          expect(inDir).toEqual({
+            code: 1,
+            stdout: '',
+            stderr: 'private-workspace-mcp: invalid configuration: WORKSPACE_AUDIT_LOG parent directory is not writable (EACCES)\n',
+          });
+          await expect(stat(path.join(dir, 'audit.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+          const file = await runCli(['--check'], { WORKSPACE_ROOT: fixture.root, WORKSPACE_AUDIT_LOG: existing });
+          expect(file).toEqual({
+            code: 1,
+            stdout: '',
+            stderr: 'private-workspace-mcp: invalid configuration: WORKSPACE_AUDIT_LOG is not writable (EACCES)\n',
+          });
+        } finally {
+          await chmod(dir, 0o700);
+          await chmod(existing, 0o600);
+        }
+      },
+    );
 
     it('--version prints the package.json version without reading configuration', async () => {
       const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };

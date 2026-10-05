@@ -100,7 +100,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | 인자 | 동작 |
 |------|------|
 | (없음) | stdio MCP 서버로 대기 |
-| `--check` | 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처, 내용 검사 여부를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. audit file은 만들지 않는다 |
+| `--check` | 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처, 내용 검사 여부를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. `WORKSPACE_AUDIT_LOG`가 있으면 그 파일과 부모 directory에 쓸 수 있는지도 확인해 쓸 수 없으면 exit 1이다(serve는 이때 audit을 stderr로 보낸다). audit file은 만들지 않는다 |
 | `--version` | version 출력 |
 
 그 밖의 인자를 주면 usage를 내고 exit 2로 끝난다.
