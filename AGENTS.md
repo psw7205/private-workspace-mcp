@@ -17,7 +17,7 @@
 | 문서 | 독자 | 담는 것 |
 |------|------|---------|
 | `README.md` | 처음 온 사용자 | 소개, 예시, 빠른 시작, tool 요약. 상세는 링크로 넘긴다 |
-| `docs/getting-started.md` | 운영자 | 설치, tunnel 연결, 업그레이드, 여러 repo, container, 문제 해결 |
+| `docs/getting-started.md` | 운영자 | 설치, tunnel 연결, 다른 MCP client, 업그레이드, 여러 repo, container, 문제 해결 |
 | `docs/reference.md` | 운영자, client 작성자 | tool 인자, error code, 환경 변수, CLI |
 | `docs/security.md` | 운영자, 리뷰어 | 방어 계층, Git hardening, client 승인, 알려진 한계(수용한 잔여 위험) |
 | `docs/hosted-verification.md` | 개발자 | ChatGPT UI(hosted) 경로로 미출시 기능을 확인하는 수동 절차 |

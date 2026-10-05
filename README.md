@@ -5,9 +5,9 @@
 ![Node](https://img.shields.io/badge/node-%3E%3D26-339933)
 [![License](https://img.shields.io/github/license/psw7205/private-workspace-mcp)](LICENSE)
 
-**내 머신의 project directory를 ChatGPT에 안전하게 연결하는 MCP 서버.**
+**내 머신의 project directory를 ChatGPT에 안전하게 연결하는 MCP 서버.** Claude Code처럼 stdio server를 직접 띄우는 MCP client에서도 같은 서버를 그대로 쓴다.
 
-OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 실행하는 stdio 서버라서 public HTTP listener가 없다. model에게는 workspace 안에서만 동작하는 작고 감사 가능한 filesystem tool을 주고, shell과 임의 process 실행은 주지 않는다.
+stdio 서버라서 public HTTP listener가 없다. ChatGPT에는 OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 띄워 연결하고, 다른 MCP client는 tunnel 없이 같은 entry를 child로 실행한다. model에게는 workspace 안에서만 동작하는 작고 감사 가능한 filesystem tool을 주고, shell과 임의 process 실행은 주지 않는다.
 
 ![MCP Inspector에서 search_text를 호출한 화면](docs/assets/inspector-search-text.png)
 
@@ -105,6 +105,8 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 4. **daemon 실행**: `tunnel-client run`을 띄운다. → [실행](docs/getting-started.md#4-daemon-실행)
 5. **connector**: ChatGPT Developer mode에서 Tunnel connector를 **인증 없음**으로 추가한다. → [connector](docs/getting-started.md#5-chatgpt-connector-연결)
 
+**다른 MCP client에서 쓰기**: 1~2번 뒤에 client 설정에 `node index.mjs`를 stdio server로 등록한다. tunnel은 필요 없다. → [다른 MCP client](docs/getting-started.md#다른-mcp-client에서-쓰기)
+
 ## Tools
 
 | tool | 하는 일 | 쓰기 |
@@ -123,13 +125,13 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 
 ## 보안
 
-path 검증은 defense-in-depth이고, 최종 경계는 전용 OS 사용자나 container 같은 OS 권한이다. read-write 모드에서는 파일에 심어진 prompt injection이 쓰기 호출로 이어질 수 있으므로 ChatGPT의 write 확인을 끄지 않는다. 방어 계층, Git hardening, client 승인 설정은 [보안 모델](docs/security.md)에 있다.
+path 검증은 defense-in-depth이고, 최종 경계는 전용 OS 사용자나 container 같은 OS 권한이다. read-write 모드에서는 파일에 심어진 prompt injection이 쓰기 호출로 이어질 수 있으므로 ChatGPT의 write 확인을 끄지 않고, 다른 client에서는 write tool 호출 전에 확인을 받는지 확인한 뒤에만 read-write를 켠다. 방어 계층, Git hardening, client 승인 설정은 [보안 모델](docs/security.md)에 있다.
 
 ## 문서
 
 | 문서 | 내용 |
 |------|------|
-| [시작하기](docs/getting-started.md) | 설치, tunnel 연결, 업그레이드, 여러 repo, container, 문제 해결 |
+| [시작하기](docs/getting-started.md) | 설치, tunnel 연결, 다른 MCP client, 업그레이드, 여러 repo, container, 문제 해결 |
 | [Reference](docs/reference.md) | tool 인자, error code, 환경 변수, CLI |
 | [보안 모델](docs/security.md) | 방어 계층, Git hardening, prompt injection과 승인, 알려진 한계 |
 | [PRD](docs/prd.md) · [ADR](docs/adr/) | 요구사항과 아키텍처 결정 |

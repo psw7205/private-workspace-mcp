@@ -25,8 +25,8 @@ flowchart LR
 |------|------|
 | Node 26 | 서버 실행. 예시는 [mise](https://mise.jdx.dev)로 설치한 node를 `$(mise which node)`로 가리킨다 |
 | [`gh`](https://cli.github.com) | release 다운로드와 attestation 검증 |
-| `tunnel-client` | OpenAI Secure MCP Tunnel client. `brew install openai/tools/tunnel-client` |
-| OpenAI Platform의 tunnel ID와 runtime API key | Platform > Tunnels. admin key가 아니라 runtime key |
+| `tunnel-client` | OpenAI Secure MCP Tunnel client. `brew install openai/tools/tunnel-client`. ChatGPT 연결(3~5절)에만 필요하다 |
+| OpenAI Platform의 tunnel ID와 runtime API key | Platform > Tunnels. admin key가 아니라 runtime key. ChatGPT 연결에만 필요하다 |
 | agent 전용 directory | workspace root. filesystem root와 home은 거부된다 |
 
 ## 먼저 로컬에서 써 보기
@@ -193,6 +193,31 @@ write tool 호출 확인은 끄지 않는다([`security.md`](security.md#prompt-
 
 Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
 
+## 다른 MCP client에서 쓰기
+
+이 서버는 stdio MCP 서버라서, stdio server를 child process로 띄우는 client(Claude Code, Claude Desktop 등)에서는 tunnel 없이 1~2절의 entry를 그대로 쓴다. 서버 코드와 보안 모델은 ChatGPT 경로와 같다(implementation notes M83). client 설정에는 command, 인자, 환경 변수를 넣는다. 형식은 client 문서를 따르고, 많은 client가 아래 모양을 쓴다.
+
+```json
+{
+  "mcpServers": {
+    "private-workspace": {
+      "command": "<node>",
+      "args": ["<entry>"],
+      "env": {
+        "WORKSPACE_ROOT": "<project>",
+        "WORKSPACE_AUDIT_LOG": "<audit-dir>/audit.jsonl"
+      }
+    }
+  }
+}
+```
+
+- `<node>`와 `<entry>`는 절대 경로다(`$(mise which node)`, `<install-dir>/current/index.mjs`). 등록하기 전에 같은 env로 `--check`를 돌린다(2절).
+- **기본은 read-only다.** `WORKSPACE_MODE=read-write`는 그 client가 `write_file`·`edit_file`·`multi_edit_file` 호출 전에 사용자 확인을 받는 것을 확인한 뒤에만 켠다. 서버는 tool annotations(`destructiveHint`)로만 알리고 client마다 처리가 다르다. 확인 없이 tool을 자동 실행하는 설정이나 client에서는 read-only로 둔다([`security.md`](security.md#prompt-injection과-client-승인)).
+- `WORKSPACE_AUDIT_LOG`를 workspace 밖 파일로 지정한다. 지정하지 않으면 audit이 서버 stderr로 가는데, client가 stderr를 어디에 남기는지는 client마다 다르다.
+- client마다 서버 process를 따로 띄우므로 protocol era가 섞이지 않는다. 서버는 2025-era와 `2026-07-28` 양쪽을 받는다(implementation notes M82). 같은 workspace를 여러 client가 쓰면 process 사이에는 revision 검사만 동작하고 lock은 process 안에서만 동작한다.
+- **원격 머신의 workspace**: command를 `ssh <host> env WORKSPACE_ROOT=<project> <node> <entry>`처럼 두면 서버는 원격에서 stdio로 돌고 listener가 없다. 인증은 SSH가 맡고, Tailscale 같은 private network 안에서도 같은 방식이다. 원격 shell의 startup 파일(`.zshenv`, `BASH_ENV`)이 stdout에 무엇이든 쓰면 MCP stream이 깨지므로, 먼저 `ssh <host> true | wc -c`가 `0`인지 확인한다. 서버를 TCP나 HTTP로 여는 것은 지원하지 않는다. MCP 계층에 인증이 없어서 listener를 열면 URL에 닿는 누구나 workspace를 읽을 수 있다(ADR-001 §16·§17).
+
 ## 업그레이드와 rollback
 
 connector는 daemon이 아니라 `tunnel_id`에 묶인다. daemon을 다시 띄우거나 머신을 재부팅해도 connector를 다시 만들 필요가 없다.
@@ -235,7 +260,7 @@ OS 권한 경계(ADR-001 §11)가 필요하면 child를 container로 띄운다. 
 |------|------------|
 | connector 생성 시 "does not implement OAuth" | 인증을 **인증 없음**으로 고른다 |
 | 서버 업그레이드 뒤에도 옛 tool 목록이 보임 | connector Refresh 후 새 대화를 시작한다 |
-| 한동안 되다가 ChatGPT 요청이 모두 실패 | MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 `tunnel-client`에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로 `tunnel-client`를 재시작한다(implementation notes M78) |
+| 한동안 되다가 ChatGPT 요청이 모두 실패 | MCP SDK `serveStdio`는 stdio connection을 **첫 요청의 protocol era**로 pin한다. OpenAI hosted 경로는 `2026-07-28`(modern)로 요청하는 것을 관측했다. 같은 `tunnel-client`에 2025-era(legacy) client를 먼저 붙이면 이후 OpenAI 요청이 실패하므로 `tunnel-client`를 재시작한다(implementation notes M78, M82) |
 | 다른 profile의 tunnel로 연결됨 | `CONTROL_PLANE_TUNNEL_ID`가 export되어 profile의 `tunnel_id`를 덮어쓰고 있다. unset한다 |
 | 이름이 평범한 파일(`backup.json` 등)이 `PATH_BLOCKED` | 내용에 API key나 private key 형식 값이 있어 내용 검사(ADR-010)에 걸렸다. audit의 `error_detail`이 `content:<pattern id>`다. secret이면 파일을 workspace 밖으로 옮긴다. 문서의 예제 값 같은 오탐이면 `WORKSPACE_CONTENT_SCAN=off`로 끌 수 있지만 서버 전체에서 꺼진다 |
 | startup이 exit 1로 끝남 | stderr의 이유를 본다. `--check`로 같은 검증을 반복할 수 있다 |

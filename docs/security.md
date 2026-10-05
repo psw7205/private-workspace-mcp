@@ -43,6 +43,7 @@ read-write 모드에서는 model이 읽은 파일 내용에 심어진 지시(pro
 
 - **Responses API**: `require_approval: {"never": {"tool_names": ["get_workspace_info", "list_directory", "read_file", "find_files", "search_text"]}}`로 읽기 tool만 자동 실행하고 나머지는 승인을 받는다. `WORKSPACE_GIT=read-only`면 `git_status`, `git_diff`, `git_log`, `git_show`도 읽기 tool이지만 history는 deny 이름으로 막지 못하는 과거 내용을 드러내므로, 자동 실행 목록에 넣을지는 따로 판단한다. 쓰기가 필요 없으면 `allowed_tools`로 읽기 tool만 노출하거나 서버를 read-only로 띄운다.
 - **ChatGPT**: write tool 호출 확인을 끄지 않는다.
+- **다른 MCP client**(Claude Code, Claude Desktop 등 stdio server를 직접 띄우는 client): 서버가 주는 신호는 annotations뿐이고 client마다 처리가 다르다. 그 client가 write tool 호출 전에 확인을 받는 것을 확인한 뒤에만 read-write를 켜고, 확인 없이 자동 실행하거나 annotations를 무시하는 client에서는 read-only로 둔다. 원격 workspace는 SSH 뒤의 stdio로만 연결한다([`getting-started.md`](getting-started.md#다른-mcp-client에서-쓰기)). TCP·HTTP listener와 public endpoint는 MCP 계층에 인증이 없으므로 열지 않는다(ADR-001 §16·§17, implementation notes M83).
 
 ## 알려진 한계
 

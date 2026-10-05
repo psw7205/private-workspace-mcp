@@ -585,6 +585,8 @@ TypeScript 공식 SDK가 안정적으로 제공되고 구현 규모도 작으므
 * Secure MCP Tunnel에 의존하므로 OpenAI 외 MCP client 사용에는 별도 transport가 필요할 수 있다.
 * MCP로 반환한 file content는 OpenAI를 통과한다.
 
+> **Amendment (2026-10-05):** "OpenAI 외 MCP client에는 별도 transport가 필요할 수 있다"는 stdio server를 child로 띄우는 client(Claude Code, Claude Desktop 등)에는 해당하지 않는다. 그 client는 `tunnel-client`와 같은 entry를 직접 실행하고, 8절·11절·14절·17절의 보안 모델은 그대로다. 원격 workspace는 SSH 뒤의 stdio로 연결하며, 16절의 "public endpoint 없음"과 17절 Amendment의 "MCP 계층 인증 없음"은 유지한다. HTTP transport가 필요한 client는 19절 "HTTP transport between tunnel-client and MCP"대로 계속 보류한다. 세부는 implementation notes M83.
+
 ---
 
 # 21. Deferred Decisions

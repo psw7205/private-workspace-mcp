@@ -201,7 +201,7 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 
 | # | 항목 | 결정 | 근거 |
 |---|------|------|------|
-| M78 | era pin 대응 | MCP SDK `serveStdio`의 기본 posture를 유지한다. stdio connection은 첫 요청의 era(2025 `initialize` 또는 `2026-07-28`)로 pin되고, era를 섞어 받는 routing이나 `legacy: 'reject'`는 도입하지 않는다. 같은 `tunnel-client`에 2025-era client가 먼저 붙어 legacy로 pin되면 `tunnel-client` 재시작으로 복구한다(getting-started "문제 해결") | OpenAI의 두 경로(Responses API, ChatGPT UI)가 모두 `2026-07-28`로 요청함을 관측했다(검증 기록의 era pin 절, `tunnel-client` 0.0.14). SDK에 stdio에서 era를 섞어 받는 옵션이 없다. `legacy: 'reject'`는 legacy pin을 원천 차단하지만 2025-era client 지원과 stdio legacy test를 함께 정리해야 해서 별도 결정으로 남긴다 |
+| M78 | era pin 대응 | MCP SDK `serveStdio`의 기본 posture를 유지한다. stdio connection은 첫 요청의 era(2025 `initialize` 또는 `2026-07-28`)로 pin되고, era를 섞어 받는 routing이나 `legacy: 'reject'`는 도입하지 않는다. 같은 `tunnel-client`에 2025-era client가 먼저 붙어 legacy로 pin되면 `tunnel-client` 재시작으로 복구한다(getting-started "문제 해결") | OpenAI의 두 경로(Responses API, ChatGPT UI)가 모두 `2026-07-28`로 요청함을 관측했다(검증 기록의 era pin 절, `tunnel-client` 0.0.14). SDK에 stdio에서 era를 섞어 받는 옵션이 없다. `legacy: 'reject'`는 legacy pin을 원천 차단하지만 2025-era client 지원과 stdio legacy test를 함께 정리해야 해서 별도 결정으로 남긴다(이후 M82에서 결정) |
 
 ### 1.2.21 `--check`의 audit file 쓰기 권한 (2026-10-05)
 
@@ -220,6 +220,18 @@ ADR-004를 `src/git/`(`runner.ts`: env·인자·spawn·종료, `repository.ts`: 
 | # | 항목 | 결정 | 근거 |
 |---|------|------|------|
 | M81 | interface와 diff | `write_file`에 `dry_run`(M49와 같은 `dryRunSchema`)을 더한다. true면 `writeTextFile`과 같은 함수(`checkWritable`: mode·surrogate·write limit, `resolveForWrite`, `checkTarget`: 존재·`expected_revision`·read limit·내용 검사)를 lock 없이 실행하고 parent directory를 만들지 않는다. 성공 출력은 `{ path, dry_run: true, created, bytes_written: 0, revision, diff, diff_truncated }`이고 `revision`은 새 content의 revision이다. diff는 새 content와 현재 content의 UTF-16 code unit 단위 공통 prefix·suffix를 뺀 가운데를 edit 하나로 `EditTracker`에 기록해(`trackReplacement`) M50의 `unifiedDiff`로 만든다. 그래서 바뀐 구간이 여러 곳이면 첫 변경부터 마지막 변경까지가 한 block이 된다(최소 diff가 아님). 새 파일은 header가 `--- /dev/null`이다. 교체될 파일이 binary나 non-UTF-8이면 `Binary files a/<path> and b/<path> differ` 한 줄이고 `diff_truncated: false`. read-only workspace에서는 `READ_ONLY`. audit은 M49와 같이 `dry_run: true`이고 `bytes_written`이 없다. 공통 `DRY_RUN_NOTE`·`dryRunSchema` 문장은 edit 전용 표현을 빼고 세 tool에 함께 쓴다 | 검사를 공유하므로 dry run이 성공한 뒤 실제 쓰기가 실패하는 경우는 그 사이의 변경(`REVISION_CONFLICT`)과 I/O 오류(parent directory 생성 실패 포함)뿐이다. prefix·suffix 방식은 파일 크기에 선형이고, Myers diff는 M50에서 측정한 비용 때문에 쓰지 않는다. 전체 교체는 바뀐 위치를 알 수 없으므로 최소성보다 비용 상한을 택했다. binary 파일 교체는 지금도 허용하지만(ADR-010 3.1절) 그 내용은 client에 보내지 않는다는 원칙을 diff에도 적용한다 |
+
+### 1.2.24 stdio `legacy` 옵션 (2026-10-05)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M82 | `legacy: 'serve'` 유지 | `serveStdio`의 `legacy` 옵션은 기본값 `'serve'`로 둔다. `'reject'`(2025-era opening 요청에 unsupported-protocol-version 오류로 답하고 연결은 modern opening을 위해 열어 둠)는 도입하지 않는다. stdio legacy test와 `pnpm e2e:tunnel`의 legacy case는 그대로 둔다 | 공식 TypeScript SDK 2.0.0의 `Client`는 기본 설정(`versionNegotiation` 없음)으로 2025-era(`initialize`, `2025-11-25`)로 연결한다(`test/stdio.test.ts`의 `connect()`와 `scripts/e2e-tunnel-client.ts`의 legacy case에서 관측). stdio server를 직접 띄우는 MCP client(M83)는 이 경로라서 `'reject'`는 그 client를 모두 끊는다. tunnel 경로의 호출자는 OpenAI뿐이고 두 경로 모두 modern(`2026-07-28`)이므로(M78) `'reject'`가 tunnel 경로에서 막아 주는 것은 없다. legacy pin은 같은 `tunnel-client` child에 2025-era client를 따로 붙일 때만 생기고 재시작으로 복구된다. 재검토 조건: SDK `Client`의 기본 era가 modern으로 바뀌거나, 배포가 tunnel 전용인데 legacy pin이 실제로 관측될 때 |
+
+### 1.2.25 지원하는 연결 경로 (2026-10-05, ADR-001 20절 Amendment)
+
+| # | 항목 | 결정 | 근거 |
+|---|------|------|------|
+| M83 | 연결 경로 | 지원 경로는 두 가지다. (1) OpenAI Secure MCP Tunnel: `tunnel-client`가 child로 띄운다. (2) stdio server를 child로 띄우는 MCP client(Claude Code, Claude Desktop 등)가 같은 entry를 직접 실행한다. 원격 머신의 workspace는 (2)의 command를 `ssh <host> ...`로 두는 방식만 안내한다. TCP·HTTP listener(`serveStdio`의 `transport` 옵션에 socket을 넘기는 것 포함)와 public endpoint는 지원하지 않는다. (2)의 운영 지침은 getting-started "다른 MCP client에서 쓰기"에 둔다: 기본 read-only, read-write는 그 client가 write tool 호출 전에 확인을 받는 것을 확인한 뒤에만, `WORKSPACE_AUDIT_LOG`는 파일로 지정 | 서버 코드는 transport와 무관하게 같고(`PathGuard`, deny, 내용 검사, revision, audit), (2)는 `test/stdio.test.ts`와 MCP Inspector가 이미 쓰는 경로라 코드 변경이 없다. ADR-001 17절 Amendment가 MCP 계층 인증을 생략한 전제는 "요청이 로컬 OS 권한을 가진 process나 SSH 인증을 거쳐 온다"로 유지된다. listener를 열면 그 전제가 깨져 인증, 호출자별 audit, rate limit, 다중 연결이 필요해지고 이는 새 ADR 범위다. client 승인은 보조 방어(ADR-001 14절)이고 client마다 다른 처리를 서버가 보정할 수 없어 운영자 지침으로 둔다 |
 
 ### 1.3 구조 조정
 
