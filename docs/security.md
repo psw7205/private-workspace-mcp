@@ -14,7 +14,7 @@
   - prefix 없는 secret(비밀번호, connection string, AWS secret access key), base64 등으로 형식을 바꾼 key, Git history(`git_diff`·`git_show`·`git_log`)는 막지 못한다. 차단 자체가 "credential 형식 값이 있다"는 사실을 드러낸다. secret 파일은 workspace 밖에 두는 것이 1차 대응이고, 이 layer는 그 실수를 일부 잡을 뿐이다.
   - 문서화된 예제 값(AWS 문서의 예제 access key id 등)도 실제 key와 형식이 같아 막힌다. 파일별 예외는 없다.
 - **안전한 write**: 기본 read-only. `WORKSPACE_ROOTS`면 `WORKSPACE_READ_WRITE`에 나열한 workspace만 쓸 수 있다(`WORKSPACE_READ_WRITE` 없이 `WORKSPACE_MODE=read-write`면 모든 workspace). 기존 파일은 revision이 일치할 때만 temp file + fsync + atomic rename으로 교체하고, 새 파일은 `link()`로 생성해 덮어쓰지 않는다.
-- **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, edit dry run이면 `dry_run: true`, 성공 여부, 소요 시간, bytes, error code, 내용 검사로 막히면 `error_detail`의 pattern id, `search_text`가 건너뛴 파일 수 `content_blocked`). 파일 내용과 secret은 기록하지 않는다.
+- **audit**: tool call마다 JSON Lines 1건(요청 id, tool, `WORKSPACE_ROOTS`면 workspace 이름, path, write tool의 dry run이면 `dry_run: true`, 성공 여부, 소요 시간, bytes, error code, 내용 검사로 막히면 `error_detail`의 pattern id, `search_text`가 건너뛴 파일 수 `content_blocked`). 파일 내용과 secret은 기록하지 않는다.
 - **오류 비노출**: client에 가는 message에는 host 절대 경로와 Node error message를 넣지 않는다. 모르는 오류는 `INTERNAL_ERROR`로 바꾸고 상세는 audit log에만 남긴다.
 
 ## Git (opt-in)

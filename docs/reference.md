@@ -22,7 +22,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | `get_workspace_info` | workspace 이름과 mode(`WORKSPACE_ROOTS`면 `workspaces: [{ name, mode }]` 목록), platform, limits, `server_version`(실행 중인 서버 version. 배포된 release 확인용). host 절대 경로는 반환하지 않음 |
 | `list_directory` | `path`(기본 `.`), `depth`(기본 1), `limit`. 이름순, depth-first. symlink는 따라가지 않고 민감 파일과 특수 파일은 생략 |
 | `read_file` | UTF-8 텍스트 파일. `start_line`/`max_lines`로 line pagination. 파일 전체 기준 `revision`(`sha256:…`) 반환 |
-| `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성 |
+| `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성. `dry_run: true`면 모든 검사만 하고 쓰지 않은 채 쓸 때의 `revision`, `created`, unified `diff`를 반환(형식은 `edit_file`과 같고, 새 파일은 `--- /dev/null`, binary·non-UTF-8 파일을 교체할 때는 `Binary files ... differ` 한 줄) |
 | `find_files` | `path`(기본 `.`) 아래를 depth 제한 없이 glob으로 검색. 패턴은 `path` 기준 상대 경로에 적용(`**/*.ts`). 특수 문자는 `*`, `?`, `**`, `[abc]`·`[a-z]`·`[!a]`(`[^a]`), `{a,b}`이고 `\`는 다음 문자를 literal로 만든다(`\{draft\}.md`). 패턴은 256자까지이고 대소문자를 구분. `.`으로 시작하는 이름은 패턴에 명시해야 맞음. `.gitignore`/`.ignore` 대상은 `include_ignored: true`가 아니면 제외. 결과는 파일 경로와 크기 |
 | `search_text` | `path` 아래 UTF-8 텍스트 파일에서 literal 문자열 검색. `regex: true`면 `query`를 RE2 문법 regex로 검색(선형 시간 엔진 `re2js`, backreference·lookaround 없음, `\d`·`\w`·`\b`는 ASCII, 줄 단위라 `^`·`$`는 줄 경계, 256자 이하, 너무 복잡한 패턴은 `INVALID_PATH`). 줄마다 첫 match의 경로·줄·열·줄 내용 반환. `glob`, `case_sensitive`(기본 false), `include_ignored`, `limit`. binary·non-UTF-8·read limit 초과 파일과 내용 검사에 걸린 파일은 건너뜀 |
 | `edit_file` | 기존 파일의 exact-match 문자열 교체(ADR-002). `old_string`은 한 번만 나와야 하고 여러 번이면 `replace_all`. `expected_revision` 필수, 새 `revision` 반환. `dry_run: true`면 모든 검사만 하고 쓰지 않은 채 적용 시의 `revision`과 unified `diff`(context 3줄, 64 KiB에서 자르고 `diff_truncated`)를 반환 |
@@ -32,7 +32,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 
 검색 제약: glob의 문자 단위는 code point다. `[`는 반드시 `]`로 닫아야 하고 `[` 바로 뒤(또는 `[!` 뒤)의 `]`는 class의 문자다. `\` 뒤에 `/`를 쓰거나 패턴이 `\`로 끝나면 `INVALID_PATH`다. class와 `?`·`*`는 `.`으로 시작하는 이름의 첫 `.`에 맞지 않는다(`\.env`나 `.env`처럼 쓴다). 상위 ignore 규칙에 걸린 경로(예: `node_modules/pkg`)를 `path`로 주면 상위 ignore 파일 전체를 적용하지 않으므로, 그 안의 `*.log` 같은 상위 규칙도 빠진다. 그 경로 아래의 ignore 파일은 그대로 적용된다.
 
-내용 검사(ADR-010): 파일 이름이 deny 목록에 없어도 내용에 알려진 형식의 credential(Anthropic·OpenAI·GitHub·GitLab·Slack·Tavily key, Google API key, AWS access key id, PEM·OpenSSH private key)이 있으면 deny 이름과 같게 다룬다. `read_file`, `edit_file`·`multi_edit_file`(`dry_run` 포함), 기존 파일을 교체하는 `write_file`은 `PATH_BLOCKED`를 받고, `search_text`는 그 파일을 건너뛴다. `list_directory`·`find_files`에는 그대로 보인다. binary·non-UTF-8·read limit 초과 파일과 새로 쓰는 content는 검사하지 않는다. `WORKSPACE_CONTENT_SCAN=off`로 끌 수 있다.
+내용 검사(ADR-010): 파일 이름이 deny 목록에 없어도 내용에 알려진 형식의 credential(Anthropic·OpenAI·GitHub·GitLab·Slack·Tavily key, Google API key, AWS access key id, PEM·OpenSSH private key)이 있으면 deny 이름과 같게 다룬다. `read_file`, `edit_file`·`multi_edit_file`(`dry_run` 포함), 기존 파일을 교체하는 `write_file`(`dry_run` 포함)은 `PATH_BLOCKED`를 받고, `search_text`는 그 파일을 건너뛴다. `list_directory`·`find_files`에는 그대로 보인다. binary·non-UTF-8·read limit 초과 파일과 새로 쓰는 content는 검사하지 않는다. `WORKSPACE_CONTENT_SCAN=off`로 끌 수 있다.
 
 ## Git tools (opt-in)
 
@@ -61,7 +61,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 | `INVALID_PATH` | 경로 문법 오류, 잘못되거나 상한을 넘는 glob·regex 패턴(`find_files`·`search_text`), symlink 대상에 쓰기, 깨진 symlink 아래에 쓰기 |
 | `FILE_NOT_FOUND` / `NOT_A_FILE` / `NOT_A_DIRECTORY` | 대상 상태 불일치 |
 | `FILE_TOO_LARGE` / `BINARY_FILE` | read/write limit 초과, binary 또는 UTF-8이 아닌 파일, lone surrogate가 든 write content나 `old_string`/`new_string` |
-| `READ_ONLY` | read-only workspace에 write 시도(`write_file`·`edit_file`·`multi_edit_file`, `dry_run` 포함) |
+| `READ_ONLY` | read-only workspace에 write 시도(`write_file`·`edit_file`·`multi_edit_file`, 모두 `dry_run` 포함) |
 | `REVISION_CONFLICT` | 읽은 뒤 파일이 바뀜, 이미 존재하는 파일을 revision 없이 생성 시도 |
 | `EDIT_NO_MATCH` / `EDIT_AMBIGUOUS` | `edit_file`·`multi_edit_file`의 `old_string`이 없음, 여러 번 나오는데 `replace_all`이 아님 |
 | `NOT_A_REPOSITORY` | Git tool: workspace root가 `.git` directory를 가진 repository toplevel이 아님 |

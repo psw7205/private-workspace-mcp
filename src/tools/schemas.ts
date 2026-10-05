@@ -24,11 +24,11 @@ export function writeAccessNote(config: Config): string {
   return `Writable workspaces: ${writable.join(', ')}.${rest}`;
 }
 
-/** Input field shared by edit_file and multi_edit_file (M49). */
+/** Input field shared by write_file, edit_file, and multi_edit_file (M49, M81). */
 export const dryRunSchema = z
   .boolean()
   .default(false)
-  .describe('Check the edit and return the would-be revision and a unified diff without writing');
+  .describe('Run every check and return the would-be revision and a unified diff without writing');
 
 /** Output fields present only on a dry run; bytes_written is then 0. */
 export const dryRunOutputShape = {
@@ -37,11 +37,11 @@ export const dryRunOutputShape = {
   diff_truncated: z.boolean().optional(),
 };
 
-/** Description sentence for the edit tools; goes before writeAccessNote. */
+/** Description sentence for the write tools; goes before writeAccessNote. */
 export const DRY_RUN_NOTE =
   'Set `dry_run` to run every check without writing: the result then has `dry_run: true`, `bytes_written: 0`, ' +
-  `the \`revision\` the edit would produce, and a unified \`diff\` (3 context lines, cut at ${MAX_DIFF_BYTES} bytes with \`diff_truncated\`). ` +
-  'To apply it, repeat the call without `dry_run` and the same `expected_revision`.';
+  `the \`revision\` the file would have, and a unified \`diff\` (3 context lines, cut at ${MAX_DIFF_BYTES} bytes with \`diff_truncated\`). ` +
+  'To apply it, repeat the call without `dry_run` and with the same other arguments.';
 
 export const pathSchema = z
   .string()

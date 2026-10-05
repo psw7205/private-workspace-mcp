@@ -125,7 +125,7 @@ describe('stdio server', () => {
         'path',
         'replace_all',
       ]);
-      for (const name of ['edit_file', 'multi_edit_file']) {
+      for (const name of ['write_file', 'edit_file', 'multi_edit_file']) {
         expect(byName[name]?.inputSchema.properties?.dry_run, name).toMatchObject({ type: 'boolean', default: false });
         expect(byName[name]?.inputSchema.required ?? [], name).not.toContain('dry_run');
         expect(byName[name]?.outputSchema?.required, name).toEqual(expect.arrayContaining(['bytes_written', 'revision']));
@@ -176,6 +176,20 @@ describe('stdio server', () => {
       });
       expect(parseText(failed).error.code).toBe('EDIT_NO_MATCH');
 
+      const writePreview = await session.client.callTool({
+        name: 'write_file',
+        arguments: { path: 'src/index.ts', content: 'import {};\n', expected_revision: read.revision, dry_run: true },
+      });
+      expect(writePreview.structuredContent).toEqual({
+        path: 'src/index.ts',
+        dry_run: true,
+        created: false,
+        bytes_written: 0,
+        revision: (preview.structuredContent as { revision: string }).revision,
+        diff: '--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1 +1 @@\n-export {};\n+import {};\n',
+        diff_truncated: false,
+      });
+
       const after = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'src/index.ts' } }));
       expect(after).toMatchObject({ content: 'export {};\n', revision: read.revision });
 
@@ -196,12 +210,14 @@ describe('stdio server', () => {
         .split('\n')
         .filter((line) => line.startsWith('{'))
         .map((line) => JSON.parse(line))
-        .filter((record) => record.path === 'src/index.ts' && ['edit_file', 'multi_edit_file'].includes(record.tool));
+        .filter((record) => record.path === 'src/index.ts' && record.tool !== 'read_file');
       expect(records.map((record) => [record.tool, record.ok, record.dry_run, record.bytes_written])).toEqual([
         ['edit_file', true, true, undefined],
         ['multi_edit_file', true, true, undefined],
         ['edit_file', false, true, undefined],
+        ['write_file', true, true, undefined],
         ['edit_file', true, undefined, 11],
+        ['write_file', true, undefined, 11],
       ]);
       expect(session.stderr()).not.toContain('import {}');
     });
@@ -814,6 +830,7 @@ describe('stdio server', () => {
       // dry_run does not lift read-only mode (M49).
       const read = parseText(await session.client.callTool({ name: 'read_file', arguments: { path: 'README.md' } }));
       for (const [name, args] of [
+        ['write_file', { content: 'x' }],
         ['edit_file', { old_string: 'readme', new_string: 'x' }],
         ['multi_edit_file', { edits: [{ old_string: 'readme', new_string: 'x' }] }],
       ] as const) {

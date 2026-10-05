@@ -4,8 +4,9 @@ import path from 'node:path';
 
 import type { Limits, WorkspaceMode } from '../config/config.js';
 import { fromFsError, WorkspaceError } from '../errors/errors.js';
+import { trackReplacement, unifiedDiff } from './edit-diff.js';
 import { decodeTextFile, readRegularFile } from './file-reader.js';
-import type { PathGuard } from './path-guard.js';
+import type { PathGuard, WriteTarget } from './path-guard.js';
 import { computeRevision } from './revision.js';
 
 export interface WriteFileOptions extends Pick<Limits, 'maxReadBytes' | 'maxWriteBytes'> {
@@ -28,6 +29,13 @@ export interface WriteFileResult {
   created: boolean;
   bytes_written: number;
   revision: string;
+}
+
+/** The write_file dry run (M81): `revision` is that of the content, not of the current file. */
+export interface WritePreviewResult extends WriteFileResult {
+  dry_run: true;
+  diff: string;
+  diff_truncated: boolean;
 }
 
 /** Serializes writes per canonical path so two agent requests cannot both pass the revision check. */
@@ -73,10 +81,7 @@ export async function writeTextFile(
   options: WriteFileOptions,
   params: WriteFileParams,
 ): Promise<WriteFileResult> {
-  if (options.mode !== 'read-write') {
-    throw new WorkspaceError('READ_ONLY', 'the workspace is read-only; the operator must enable read-write mode');
-  }
-  const bytes = encodeContent(params.content, options.maxWriteBytes);
+  const bytes = checkWritable(options, params);
 
   const { absolutePath: lockKey } = await guard.resolveForWrite(params.path);
   return withPathLock(lockKey, async () => {
@@ -85,30 +90,7 @@ export async function writeTextFile(
     // Resolve again under the lock: a queued write may have changed the target.
     const target = await guard.resolveForWrite(params.path);
     const { relativePath, absolutePath } = target;
-
-    let existingMode: number | undefined;
-    if (target.exists) {
-      if (params.expectedRevision === undefined) {
-        throw new WorkspaceError(
-          'REVISION_CONFLICT',
-          `${relativePath} already exists; read it and pass its revision as expected_revision to replace it`,
-        );
-      }
-      // Bounded by the read limit: read_file never returns a revision for a larger file.
-      const current = await readRegularFile(absolutePath, relativePath, options.maxReadBytes);
-      assertReplaceable(guard, current.bytes, relativePath);
-      if (computeRevision(current.bytes) !== params.expectedRevision) {
-        throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} changed since it was read; read it again and retry`);
-      }
-      existingMode = current.mode;
-    } else if (params.mustExist) {
-      throw new WorkspaceError('FILE_NOT_FOUND', `${relativePath} does not exist`);
-    } else if (params.expectedRevision !== undefined) {
-      throw new WorkspaceError(
-        'REVISION_CONFLICT',
-        `${relativePath} no longer exists; omit expected_revision to create it`,
-      );
-    }
+    const existingMode = (await checkTarget(guard, options, params, target))?.mode;
 
     const parent = path.dirname(absolutePath);
     await createMissingDirectories(target.existingAncestor, target.missingDirectories, relativePath);
@@ -155,6 +137,81 @@ export async function writeTextFile(
       revision: computeRevision(bytes),
     };
   });
+}
+
+/**
+ * Runs every check writeTextFile makes, without the lock and without touching the file, and
+ * returns the would-be revision with a diff against the current content (M81).
+ */
+export async function previewWriteTextFile(
+  guard: PathGuard,
+  options: WriteFileOptions,
+  params: WriteFileParams,
+): Promise<WritePreviewResult> {
+  const bytes = checkWritable(options, params);
+  const target = await guard.resolveForWrite(params.path);
+  const current = await checkTarget(guard, options, params, target);
+  return {
+    path: target.relativePath,
+    dry_run: true,
+    created: current === undefined,
+    bytes_written: 0,
+    revision: computeRevision(bytes),
+    ...previewDiff(target.relativePath, current?.bytes, params.content),
+  };
+}
+
+function checkWritable(options: WriteFileOptions, params: WriteFileParams): Buffer {
+  if (options.mode !== 'read-write') {
+    throw new WorkspaceError('READ_ONLY', 'the workspace is read-only; the operator must enable read-write mode');
+  }
+  return encodeContent(params.content, options.maxWriteBytes);
+}
+
+/** Checks the revision rules for `target` and returns the file it would replace, if any. */
+async function checkTarget(
+  guard: PathGuard,
+  options: WriteFileOptions,
+  params: WriteFileParams,
+  target: WriteTarget,
+): Promise<{ bytes: Buffer; mode: number } | undefined> {
+  const { relativePath, absolutePath } = target;
+  if (target.exists) {
+    if (params.expectedRevision === undefined) {
+      throw new WorkspaceError(
+        'REVISION_CONFLICT',
+        `${relativePath} already exists; read it and pass its revision as expected_revision to replace it`,
+      );
+    }
+    // Bounded by the read limit: read_file never returns a revision for a larger file.
+    const current = await readRegularFile(absolutePath, relativePath, options.maxReadBytes);
+    assertReplaceable(guard, current.bytes, relativePath);
+    if (computeRevision(current.bytes) !== params.expectedRevision) {
+      throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} changed since it was read; read it again and retry`);
+    }
+    return current;
+  }
+  if (params.mustExist) throw new WorkspaceError('FILE_NOT_FOUND', `${relativePath} does not exist`);
+  if (params.expectedRevision !== undefined) {
+    throw new WorkspaceError('REVISION_CONFLICT', `${relativePath} no longer exists; omit expected_revision to create it`);
+  }
+  return undefined;
+}
+
+/** A binary or non-UTF-8 file being replaced is named, never shown (ADR-010 §3.1). */
+function previewDiff(relativePath: string, current: Buffer | undefined, content: string): { diff: string; diff_truncated: boolean } {
+  let before = '';
+  if (current !== undefined) {
+    try {
+      before = decodeTextFile(current, relativePath);
+    } catch {
+      return { diff: `Binary files a/${relativePath} and b/${relativePath} differ\n`, diff_truncated: false };
+    }
+  }
+  const { diff, truncated } = unifiedDiff(relativePath, before, content, trackReplacement(before, content), {
+    created: current === undefined,
+  });
+  return { diff, diff_truncated: truncated };
 }
 
 /**

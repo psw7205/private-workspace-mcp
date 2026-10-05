@@ -16,7 +16,7 @@ OpenAI Secure MCP Tunnel의 `tunnel-client`가 child process로 실행하는 std
 - **workspace 밖으로 못 나감**: root는 서버 설정으로만 정하고 realpath로 고정한다. `..`, 절대 경로, symlink 탈출은 `PATH_OUTSIDE_WORKSPACE`로 거부한다.
 - **민감 파일 차단**: `.env`, `*.pem`, `.ssh`, `credentials*` 등은 읽기·쓰기가 `PATH_BLOCKED`로 거부되고, 목록·검색·Git 결과에서는 존재 여부도 드러내지 않고 빠진다. 기본 deny 목록은 설정으로 지울 수 없다. 이름이 평범해도 내용에 API key나 private key 형식 값이 든 파일은 읽기·편집·검색에서 막힌다.
 - **기본 read-only, 쓰기는 revision 기반**: 기존 파일은 읽을 때 받은 `revision`이 맞아야만 atomic하게 교체한다. 그 사이 사람이 파일을 고쳤다면 `REVISION_CONFLICT`로 막는다.
-- **적용 전 diff 확인**: `edit_file`·`multi_edit_file`의 `dry_run`은 쓰지 않고 unified diff만 돌려준다.
+- **적용 전 diff 확인**: `write_file`·`edit_file`·`multi_edit_file`의 `dry_run`은 쓰지 않고 unified diff만 돌려준다.
 - **여러 repo를 tunnel 하나로**: `WORKSPACE_ROOTS=api=…,web=…`로 띄우고 repo별로 read-write를 따로 줄 수 있다.
 - **Git은 opt-in read-only**: `WORKSPACE_GIT=read-only`면 `git_status`·`git_diff`·`git_log`·`git_show`가 켜진다. hook, filter, network는 모두 끈 채로 실행한다.
 - **모든 호출을 audit**: tool call마다 JSON Lines 1건을 남기고, 파일 내용과 secret은 기록하지 않는다.
@@ -114,7 +114,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 | `read_file` | UTF-8 파일 읽기(line pagination), `revision` 반환 | |
 | `find_files` | glob으로 파일 찾기(`.gitignore` 존중) | |
 | `search_text` | literal 또는 RE2 regex 검색 | |
-| `write_file` | 파일 생성 또는 전체 교체 | ✓ |
+| `write_file` | 파일 생성 또는 전체 교체, `dry_run` diff | ✓ |
 | `edit_file` | exact-match 문자열 교체, `dry_run` diff | ✓ |
 | `multi_edit_file` | 한 파일에 여러 edit를 atomic하게 적용 | ✓ |
 | `git_status` · `git_diff` · `git_log` · `git_show` | read-only Git 조회(`WORKSPACE_GIT=read-only`일 때만) | |

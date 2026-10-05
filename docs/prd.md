@@ -646,6 +646,8 @@ MVP 범위와 분리해서 단계적으로 진행한다.
 
 > **Amendment (2026-09-24, 2):** "before/after diff 생성"과 "write preview" 중 `edit_file`·`multi_edit_file`의 `dry_run`만 구현한다(ADR-002 5절 Amendment, implementation notes M49~M50). 모든 검사를 하되 쓰지 않고, 적용 시의 revision과 unified diff를 돌려준다. `write_file` preview, approval과 나머지 항목은 여전히 보류한다.
 
+> **Amendment (2026-10-05):** `write_file`에도 `dry_run`을 더해 write preview를 마친다(ADR-002 5절 Amendment 2026-10-05, implementation notes M81). line/range replacement와 여러 파일에 걸친 bulk edit transaction은 채택하지 않는다. 앞은 줄 번호 오류를 서버가 알아챌 수 없어서, 뒤는 여러 파일의 원자적 commit 수단이 없어서다. write approval, formatter integration, file revision history, rollback은 여전히 보류한다.
+
 ---
 
 ## Phase 3 — Better File Intelligence

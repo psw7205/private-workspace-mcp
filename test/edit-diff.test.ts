@@ -13,7 +13,7 @@ function diffOf(before: string, edits: Edit[], maxBytes = MAX_DIFF_BYTES) {
     tracker.apply(parts, oldString.length, newString.length);
     content = parts.join(newString);
   }
-  return { after: content, ...unifiedDiff('f.txt', before, content, tracker, maxBytes) };
+  return { after: content, ...unifiedDiff('f.txt', before, content, tracker, { maxBytes }) };
 }
 
 /** A strict unified diff applier: context and removed lines must match `before` exactly. */

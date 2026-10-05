@@ -1,10 +1,10 @@
-import { chmod, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { readTextFile } from '../src/filesystem/file-reader.js';
-import { writeTextFile } from '../src/filesystem/file-writer.js';
+import { previewWriteTextFile, writeTextFile } from '../src/filesystem/file-writer.js';
 import { PathGuard } from '../src/filesystem/path-guard.js';
 import { computeRevision } from '../src/filesystem/revision.js';
 import { WorkspaceError } from '../src/errors/errors.js';
@@ -290,5 +290,107 @@ describe('writeTextFile after its signal aborts (M43)', () => {
     await expect(queued).rejects.toThrow();
     expect(await readFile(inRoot('README.md'), 'utf8')).toBe('first');
     expect(await tempFiles()).toEqual([]);
+  });
+});
+
+describe('previewWriteTextFile', () => {
+  let fixture: Fixture;
+  let guard: PathGuard;
+
+  beforeEach(async () => {
+    fixture = await createFixture();
+    guard = new PathGuard(fixture.realRoot);
+  });
+
+  afterEach(async () => {
+    await fixture.cleanup();
+  });
+
+  const inRoot = (relative: string) => path.join(fixture.root, relative);
+  const readmeRevision = () => computeRevision(Buffer.from('# readme\n'));
+
+  it('previews a replacement without writing', async () => {
+    const preview = await previewWriteTextFile(guard, readWrite, {
+      path: 'README.md',
+      content: '# readme\nmore\n',
+      expectedRevision: readmeRevision(),
+    });
+    expect(preview).toEqual({
+      path: 'README.md',
+      dry_run: true,
+      created: false,
+      bytes_written: 0,
+      revision: computeRevision(Buffer.from('# readme\nmore\n')),
+      diff: '--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n # readme\n+more\n',
+      diff_truncated: false,
+    });
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+  });
+
+  it('previews a new file from /dev/null without creating it or its directories', async () => {
+    const preview = await previewWriteTextFile(guard, readWrite, { path: 'docs/new.md', content: 'a\nb' });
+    expect(preview).toMatchObject({
+      path: 'docs/new.md',
+      created: true,
+      bytes_written: 0,
+      revision: computeRevision(Buffer.from('a\nb')),
+      diff: '--- /dev/null\n+++ b/docs/new.md\n@@ -0,0 +1,2 @@\n+a\n+b\n\\ No newline at end of file\n',
+    });
+    await expect(stat(inRoot('docs'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('shows only the changed lines with three lines of context', async () => {
+    const options = { mode: 'read-write', maxReadBytes: 1024, maxWriteBytes: 1024 } as const;
+    const before = 'a\nb\nc\nd\ne\nf\ng\nh\ni\n';
+    await writeFile(inRoot('letters.txt'), before);
+    const preview = await previewWriteTextFile(guard, options, {
+      path: 'letters.txt',
+      content: before.replace('e\n', 'E\n'),
+      expectedRevision: computeRevision(Buffer.from(before)),
+    });
+    expect(preview.diff).toBe('--- a/letters.txt\n+++ b/letters.txt\n@@ -2,7 +2,7 @@\n b\n c\n d\n-e\n+E\n f\n g\n h\n');
+  });
+
+  it('returns an empty diff for identical content', async () => {
+    const preview = await previewWriteTextFile(guard, readWrite, {
+      path: 'README.md',
+      content: '# readme\n',
+      expectedRevision: readmeRevision(),
+    });
+    expect(preview).toMatchObject({ diff: '', diff_truncated: false, revision: readmeRevision() });
+  });
+
+  it('does not show the content of a binary file it would replace', async () => {
+    await writeFile(inRoot('blob.bin'), Buffer.from([0, 1, 2, 0xff]));
+    const preview = await previewWriteTextFile(guard, readWrite, {
+      path: 'blob.bin',
+      content: 'text\n',
+      expectedRevision: computeRevision(Buffer.from([0, 1, 2, 0xff])),
+    });
+    expect(preview.diff).toBe('Binary files a/blob.bin and b/blob.bin differ\n');
+  });
+
+  it('fails with the same code as the write would', async () => {
+    await mkdir(inRoot('big'));
+    await writeFile(inRoot('big/large.txt'), 'x'.repeat(65));
+    const readOnly = { mode: 'read-only', maxReadBytes: 64, maxWriteBytes: 32 } as const;
+    const cases = [
+      [readOnly, { path: 'new.txt', content: 'x' }, 'READ_ONLY'],
+      [readWrite, { path: 'README.md', content: 'x' }, 'REVISION_CONFLICT'],
+      [readWrite, { path: 'README.md', content: 'x', expectedRevision: computeRevision(Buffer.from('stale')) }, 'REVISION_CONFLICT'],
+      [readWrite, { path: 'gone.txt', content: 'x', expectedRevision: readmeRevision() }, 'REVISION_CONFLICT'],
+      [readWrite, { path: 'new.txt', content: 'x'.repeat(33) }, 'FILE_TOO_LARGE'],
+      [readWrite, { path: 'new.txt', content: '\ud800' }, 'BINARY_FILE'],
+      [readWrite, { path: 'big/large.txt', content: 'x', expectedRevision: computeRevision(Buffer.from('x'.repeat(65))) }, 'FILE_TOO_LARGE'],
+      [readWrite, { path: '.env', content: 'x' }, 'PATH_BLOCKED'],
+      [readWrite, { path: '../outside.txt', content: 'x' }, 'PATH_OUTSIDE_WORKSPACE'],
+      [readWrite, { path: 'src', content: 'x' }, 'NOT_A_FILE'],
+    ] as const;
+    for (const [options, params, code] of cases) {
+      await expectWorkspaceError(previewWriteTextFile(guard, options, params), code);
+      await expectWorkspaceError(writeTextFile(guard, options, params), code);
+    }
+    expect(await readFile(inRoot('README.md'), 'utf8')).toBe('# readme\n');
+    await expect(stat(inRoot('new.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

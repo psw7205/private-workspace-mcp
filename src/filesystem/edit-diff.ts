@@ -67,6 +67,30 @@ export class EditTracker {
   }
 }
 
+/**
+ * Tracks a whole-content replacement (write_file dry run) as one edit between the common
+ * prefix and suffix, so the diff costs linear time instead of a minimal-diff search (M81).
+ */
+export function trackReplacement(before: string, after: string): EditTracker {
+  const shorter = Math.min(before.length, after.length);
+  let prefix = 0;
+  while (prefix < shorter && before.charCodeAt(prefix) === after.charCodeAt(prefix)) prefix++;
+  let suffix = 0;
+  while (
+    suffix < shorter - prefix &&
+    before.charCodeAt(before.length - 1 - suffix) === after.charCodeAt(after.length - 1 - suffix)
+  ) {
+    suffix++;
+  }
+  const tracker = new EditTracker(before.length);
+  tracker.apply(
+    [before.slice(0, prefix), before.slice(before.length - suffix)],
+    before.length - prefix - suffix,
+    after.length - prefix - suffix,
+  );
+  return tracker;
+}
+
 function push(segments: Segment[], segment: Segment): void {
   const last = segments.at(-1);
   if (last && last.from < 0 && segment.from < 0) last.length += segment.length;
@@ -114,13 +138,14 @@ export interface DiffResult {
  * Builds a unified diff (`diff -u` format, 3 context lines) from the tracked edits. Every change
  * is widened to whole lines; the text around it is identical on both sides because it comes from
  * the same unchanged run. Output stops at a line boundary once it would exceed `maxBytes`.
+ * A `created` file is diffed against `/dev/null`, as git does.
  */
 export function unifiedDiff(
   relativePath: string,
   before: string,
   after: string,
   tracker: EditTracker,
-  maxBytes = MAX_DIFF_BYTES,
+  { maxBytes = MAX_DIFF_BYTES, created = false }: { maxBytes?: number; created?: boolean } = {},
 ): DiffResult {
   const oldStarts = lineStarts(before);
   const newStarts = lineStarts(after);
@@ -197,7 +222,7 @@ export function unifiedDiff(
   const range = (start: number, count: number) =>
     count === 1 ? `${start + 1}` : `${count === 0 ? start : start + 1},${count}`;
 
-  let truncated = !(emit(`--- a/${relativePath}`) && emit(`+++ b/${relativePath}`));
+  let truncated = !(emit(created ? '--- /dev/null' : `--- a/${relativePath}`) && emit(`+++ b/${relativePath}`));
   for (let first = 0; first < blocks.length && !truncated; ) {
     let last = first;
     while (

@@ -82,6 +82,16 @@ match는 decode된 문자열에 대한 정확한 비교다. 줄바꿈 정규화,
 
 diff는 외부 dependency 없이 교체 위치에서 직접 만든다. 세부 결정은 implementation notes M49~M50에 있다. `write_file` preview, 여러 파일 preview, approval flow(ADR-003)는 여전히 보류한다.
 
+#### Amendment (2026-10-05)
+
+남은 보류 항목 중 세 가지를 정리한다.
+
+- **`write_file` preview를 채택한다.** `write_file`에도 같은 `dry_run`을 더한다. 의미, mode, 호환, annotations는 위 Amendment와 같다. 결과에는 `created`가 함께 나온다. diff는 새 content와 현재 content의 공통 prefix·suffix를 뺀 구간을 한 번의 교체로 보고 같은 diff 생성기로 만든다. 새 파일은 `/dev/null`과 비교한다. 교체될 파일이 binary나 non-UTF-8이면 내용을 보이지 않고 `Binary files ... differ` 한 줄만 돌려준다. 세부 결정은 implementation notes M81에 있다.
+- **line/range 교체는 채택하지 않는다.** 3절의 이유가 그대로다. revision이 같아도 agent가 줄 번호를 잘못 세면 서버는 알아챌 수 없다. 원문을 함께 받아 확인하는 방식은 exact-match `edit_file`과 같아진다.
+- **여러 파일에 걸친 bulk edit transaction은 채택하지 않는다.** 파일 하나의 원자성은 temp file + rename에 기대는데, 여러 파일의 rename을 한 번에 commit할 수단이 없다. 중간에 실패하면 일부 파일만 바뀐 상태가 남고, "실패하면 아무것도 바뀌지 않는다"는 `multi_edit_file`의 계약과 어긋난다. 여러 파일을 고칠 때는 파일마다 `dry_run`으로 먼저 확인하고 `multi_edit_file`을 파일별로 호출한다. 각 호출의 `expected_revision`이 그 사이의 동시 수정을 막는다.
+
+write approval(ADR-003), formatter integration, revision history와 rollback은 여전히 보류한다.
+
 ## 6. Consequences
 
 ### Positive
