@@ -25,7 +25,7 @@ flowchart LR
 |------|------|
 | Node 26 | 서버 실행. 예시는 [mise](https://mise.jdx.dev)로 설치한 node를 `$(mise which node)`로 가리킨다 |
 | [`gh`](https://cli.github.com) | release 다운로드와 attestation 검증 |
-| `tunnel-client` | OpenAI Secure MCP Tunnel client. `brew install openai/tools/tunnel-client`. ChatGPT 연결(3~5절)에만 필요하다 |
+| `tunnel-client` | OpenAI Secure MCP Tunnel client. `brew install openai/tools/tunnel-client`. Linux는 [release](https://github.com/openai/tunnel-client/releases)의 `tunnel-client-v<version>-linux-<arch>.zip`을 `SHA256SUMS.txt`로 확인하고 압축을 푼 파일을 한 directory에 둔다(`tunnel-client-runtime-*`에는 `init`이 없다). ChatGPT 연결(3~5절)에만 필요하다 |
 | OpenAI Platform의 tunnel ID와 runtime API key | Platform > Tunnels. admin key가 아니라 runtime key. ChatGPT 연결에만 필요하다 |
 | agent 전용 directory | workspace root. filesystem root와 home은 거부된다 |
 
@@ -177,7 +177,7 @@ systemctl --user restart tunnel-client-workspace-mcp
 
 - 한 tunnel에는 instance 하나만 띄운다. 서비스로 옮기기 전에 terminal에서 띄운 `run`을 멈춘다.
 - 재시작한 뒤 `/readyz`와 로그의 `private-workspace-mcp <version>+<build> listening on stdio (workspace "<name>", <mode>)` 줄로 새 설정이 적용됐는지 본다. `<build>`는 bundle한 commit이고 MCP client에서는 `get_workspace_info`의 `server_build`로 보인다. release면 그 tag의 commit, `pnpm install:local`이면 `readlink "$DIR/current"`가 가리키는 `v<version>-<commit>`의 commit과 같아야 한다. 다르면 `current`만 바뀌고 daemon은 이전 build로 떠 있는 것이다.
-- systemd 예시는 아직 실제 머신에서 확인하지 않았다.
+- linger가 꺼져 있으면(systemd 기본값) user unit은 그 사용자의 login session이 있는 동안만 돈다. 마지막 session이 끝나면 user manager와 함께 멈추고, 부팅 뒤에는 로그인할 때까지 뜨지 않는다. SSH 로그아웃 뒤에도 띄워 두려면 `sudo loginctl enable-linger "$USER"`를 한 번 실행한다.
 
 ## 5. ChatGPT connector 연결
 

@@ -1,6 +1,6 @@
 # Hosted 검증 체크리스트
 
-`pnpm test`와 `pnpm e2e:tunnel`(`tunnel-client dev proxy`)로는 확인했지만 OpenAI hosted 경로로는 아직 확인하지 않은 기능을 ChatGPT UI에서 사람이 확인하는 절차다. 남은 항목과 진행 상황은 GitHub issue에서 추적한다.
+`pnpm test`와 `pnpm e2e:tunnel`(`tunnel-client dev proxy`)로는 확인했지만 OpenAI hosted 경로로는 아직 확인하지 않은 기능을 ChatGPT UI에서 사람이 확인하는 절차다. model을 거치지 않는 호출은 부록 D처럼 Codex CLI로 자동화할 수 있다. 남은 항목과 진행 상황은 GitHub issue에서 추적한다.
 
 | 대상 | 근거 |
 |------|------|
@@ -97,12 +97,12 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp-verif
 A=<fixture>/audit/audit.jsonl
 ls -l "$A"                                                    # -rw------- (0600)
 jq -c '{tool, workspace, path, ok, error_code}' "$A"
-jq -s 'map(select(.workspace == null)) | length' "$A"         # 0
+jq -s 'map(select(.workspace == null and .tool != "get_workspace_info")) | length' "$A"   # 0
 grep -c 'dummy\|created\|web-team' "$A"                       # 0 (파일 내용 없음)
 ```
 
 - 기대: 3절에서 서버까지 간 호출마다 1줄(8단계는 model이 호출한 경우만). SDK 입력 검증에서 거부된 호출(모르는 `workspace` 등)은 남지 않는다(M35).
-- 모든 줄에 `workspace`가 있고, 4·8·9·10·11단계의 실패 줄에 `error_code`(`PATH_BLOCKED`, `READ_ONLY`, `EDIT_AMBIGUOUS`, `REVISION_CONFLICT`, `EDIT_NO_MATCH`)가 있다.
+- 인자가 없는 `get_workspace_info`를 뺀 모든 줄에 `workspace`가 있고, 4·8·9·10·11단계의 실패 줄에 `error_code`(`PATH_BLOCKED`, `READ_ONLY`, `EDIT_AMBIGUOUS`, `REVISION_CONFLICT`, `EDIT_NO_MATCH`)가 있다.
 - 파일 내용, `.env` 값, host 절대 경로가 없다.
 
 ## 5. 정리
@@ -165,3 +165,20 @@ curl -s https://api.openai.com/v1/responses \
    | 5 | "api에서 `HEAD:.env`를 git_show로 보여줘" | model이 거절하거나 `INVALID_REVISION` |
 
 5. 4절처럼 audit을 확인한다. Git 호출 record에 `bytes_read`가 있고 파일 내용, rev 문자열, git stderr가 없어야 한다.
+
+## 부록 D. (선택) Codex app-server로 hosted 경로 직접 호출
+
+ChatGPT 계정으로 로그인한 Codex CLI는 ChatGPT connector를 `codex_apps` MCP server로 노출한다. `codex app-server`(stdio JSON-RPC)로 이 connector의 tool을 정해진 인자로 부르면, ChatGPT UI와 같은 hosted connector → tunnel-service → `tunnel-client` → stdio 경로를 API credit 없이 지난다. 3절 2~6·8~11단계의 tool 결과, 부록 B, 부록 C(Refresh 뒤), 서비스 등록 뒤 확인을 이렇게 자동화할 수 있다.
+
+1. `initialize` 다음 `thread/start`(`ephemeral: true`, `sandbox: "read-only"`)로 thread를 만든다.
+2. `mcpServerStatus/list`(`serverName: "codex_apps"`)의 tool 이름 `<connector>.<tool>`에서 connector 이름과 hosted가 가진 schema를 본다.
+3. `mcpServer/tool/call`(`server: "codex_apps"`, `threadId`, `tool: "<connector>.<tool>"`, `arguments`)로 호출한다.
+
+Codex CLI 0.161.0에서 본 동작:
+
+- write tool도 승인 요청 없이 실행된다. 첫 호출은 `get_workspace_info`로 하고, connector가 검증용 daemon을 가리키는지 확인한 뒤 다음으로 넘어간다. 평소 daemon이 떠 있는 동안에는 그 workspace에 쓰게 된다.
+- daemon을 바꾼 직후 첫 호출이 서버에 오지 않고 `MCP request timed out`으로 끝난 적이 있다. 다시 부르면 새 daemon으로 간다.
+- hosted가 가진 tool schema는 ChatGPT의 connector Refresh(3절 1단계)로 바꾼다. `app/installed`의 `forceRefresh`로는 바뀌지 않고, 서버에 `tools/list`도 오지 않는다. schema에 없는 tool(Refresh 전의 Git tool)은 `Unknown tool`로 거부된다. schema에 없는 인자(Refresh 전의 `workspace`)는 서버까지 그대로 간다.
+- 호출은 hosted schema를 따르고, Codex 쪽 목록(`mcpServerStatus/list`)은 Refresh 뒤 `forceRefresh`를 해야 새 schema를 받는다. 목록이 이전 schema여도 Refresh 뒤의 tool은 부를 수 있다.
+- 오류 결과에는 hosted 쪽이 `structuredContent: {"error_code":"INVALID_ARGUMENT"}`를 덧붙인다. 서버가 보낸 code는 `content` text와 audit으로 확인한다.
+- model을 거치지 않으므로 model의 인자 선택(3절 7·8단계)과 ChatGPT의 write 확인은 이 방법으로 확인하지 못한다.
