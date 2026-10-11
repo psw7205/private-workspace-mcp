@@ -3,9 +3,12 @@ import { parseArgs } from 'node:util';
 import type { Config } from './config/config.js';
 import type { GitInstallation } from './git/runner.js';
 import { DEFAULT_DENY_PATTERNS } from './policy/deny-list.js';
-import { SERVER_NAME, SERVER_VERSION } from './server/server.js';
+import { SERVER_BUILD, SERVER_NAME, SERVER_VERSION } from './server/server.js';
 
 export type CliCommand = 'serve' | 'check' | 'version';
+
+/** How the startup line and `--check` name this process: the build is semver build metadata after `+` (M84). */
+export const SERVER_LABEL = `${SERVER_NAME} ${SERVER_VERSION}+${SERVER_BUILD}`;
 
 export const USAGE = `Usage: ${SERVER_NAME} [--check | --version]
   (no flag)  serve MCP over stdio using WORKSPACE_* environment variables
@@ -40,7 +43,7 @@ export function describeConfig(config: Config, git?: GitInstallation): string[] 
   const { limits, audit } = config;
   const extra = config.denyPatterns.slice(DEFAULT_DENY_PATTERNS.length);
   return [
-    `${SERVER_NAME} ${SERVER_VERSION}: configuration OK (${config.multi ? 'WORKSPACE_ROOTS' : 'WORKSPACE_ROOT'})`,
+    `${SERVER_LABEL}: configuration OK (${config.multi ? 'WORKSPACE_ROOTS' : 'WORKSPACE_ROOT'})`,
     ...config.workspaces.map(({ name, mode, root }) => `workspace "${name}" ${mode} ${root}`),
     `limits: max_read_bytes=${limits.maxReadBytes} max_write_bytes=${limits.maxWriteBytes} ` +
       `max_directory_entries=${limits.maxDirectoryEntries} max_depth=${limits.maxDepth} ` +

@@ -176,7 +176,7 @@ systemctl --user restart tunnel-client-workspace-mcp
 ```
 
 - 한 tunnel에는 instance 하나만 띄운다. 서비스로 옮기기 전에 terminal에서 띄운 `run`을 멈춘다.
-- 재시작한 뒤 `/readyz`와 로그의 `listening on stdio (workspace "<name>", <mode>)` 줄로 새 설정이 적용됐는지 본다. 어떤 build가 떴는지는 `readlink "$DIR/current"`와 `get_workspace_info`의 `server_version`으로 확인한다.
+- 재시작한 뒤 `/readyz`와 로그의 `private-workspace-mcp <version>+<build> listening on stdio (workspace "<name>", <mode>)` 줄로 새 설정이 적용됐는지 본다. `<build>`는 bundle한 commit이고 MCP client에서는 `get_workspace_info`의 `server_build`로 보인다. release면 그 tag의 commit, `pnpm install:local`이면 `readlink "$DIR/current"`가 가리키는 `v<version>-<commit>`의 commit과 같아야 한다. 다르면 `current`만 바뀌고 daemon은 이전 build로 떠 있는 것이다.
 - systemd 예시는 아직 실제 머신에서 확인하지 않았다.
 
 ## 5. ChatGPT connector 연결

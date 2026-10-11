@@ -8,13 +8,16 @@ import { Client, type ClientOptions } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { serverBuild } from '../scripts/bundle.js';
 import { createFixture, expectNoHostPath, FAKE_CREDENTIALS, initRepository, type Fixture } from './helpers.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// TEST_SERVER_ENTRY runs this suite against a built artifact (e.g. release/index.mjs) instead of the source.
+// TEST_SERVER_ENTRY runs this suite against a `pnpm bundle` output (release/index.mjs) instead of the source.
 const serverArgs = process.env.TEST_SERVER_ENTRY
   ? [path.resolve(projectRoot, process.env.TEST_SERVER_ENTRY)]
   : ['--import', 'tsx', path.join(projectRoot, 'src/index.ts')];
+// Only a bundle knows the commit it was built from (M84).
+const expectedBuild = process.env.TEST_SERVER_ENTRY ? serverBuild() : 'unknown';
 
 type ToolText = { content: Array<{ type: string; text?: string }>; isError?: boolean };
 
@@ -232,10 +235,11 @@ describe('stdio server', () => {
         platform: process.platform,
         limits: { max_read_bytes: 1_048_576, max_depth: 2 },
       });
-      expect(Object.keys(info)).toEqual(['name', 'root', 'mode', 'platform', 'limits', 'git', 'server_version']);
+      expect(Object.keys(info)).toEqual(['name', 'root', 'mode', 'platform', 'limits', 'git', 'server_version', 'server_build']);
       expect(info.git).toBe(false);
       const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };
       expect(info.server_version).toBe(pkg.version);
+      expect(info.server_build).toBe(expectedBuild);
       expectNoHostPath(JSON.stringify(result), fixture);
     });
 
@@ -426,6 +430,7 @@ describe('stdio server', () => {
       expect(info).not.toHaveProperty('root');
       expect(info).not.toHaveProperty('mode');
       expect(info.server_version).toEqual(expect.any(String));
+      expect(info.server_build).toBe(expectedBuild);
       expectNoHostPath(JSON.stringify(result), fixture);
       expectNoHostPath(JSON.stringify(result), other);
     });
@@ -857,7 +862,8 @@ describe('stdio server', () => {
       });
       expect(result).toMatchObject({ code: 0, stdout: '' });
       const lines = result.stderr.trimEnd().split('\n');
-      expect(lines[0]).toMatch(/^private-workspace-mcp \S+: configuration OK \(WORKSPACE_ROOT\)$/);
+      const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };
+      expect(lines[0]).toBe(`private-workspace-mcp ${pkg.version}+${expectedBuild}: configuration OK (WORKSPACE_ROOT)`);
       expect(lines).toContain(`workspace "workspace" read-write ${await realpath(fixture.root)}`);
       expect(result.stderr).toContain('max_depth=2');
       expect(lines).toContain(`audit: file ${path.join(await realpath(fixture.outside), 'check-audit.jsonl')} (rotate at 10485760 bytes)`);
@@ -959,6 +965,29 @@ describe('stdio server', () => {
     const [code] = await once(child, 'exit');
     expect(code).not.toBe(0);
     expect(stdout).toBe('');
+  });
+
+  it('announces its version and build on stderr when it starts serving', async () => {
+    const child = spawn(process.execPath, serverArgs, {
+      cwd: projectRoot,
+      env: { ...getDefaultEnvironment(), WORKSPACE_ROOT: fixture.root },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    await new Promise<void>((resolve) => {
+      const check = () => (stderr.includes('listening on stdio') ? resolve() : setTimeout(check, 20));
+      check();
+    });
+    const exited = once(child, 'exit');
+    child.stdin?.end();
+    await exited;
+
+    const pkg = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };
+    const name = path.basename(fixture.root);
+    expect(stderr.split('\n')).toContain(
+      `private-workspace-mcp ${pkg.version}+${expectedBuild} listening on stdio (workspace "${name}", read-only)`,
+    );
   });
 
   it.each(stopCases)('exits cleanly when %s', async (_label, stop) => {

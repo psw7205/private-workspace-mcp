@@ -19,15 +19,19 @@ const sharedOutput = {
   git: z.boolean(),
   /** The running server's version, so a model can tell which release is deployed. */
   server_version: z.string(),
+  /** The commit the running bundle was built from, so builds of the same version can be told apart (M84). */
+  server_build: z.string(),
 };
 
 const singleOutputSchema = z.object({ name: z.string(), root: z.literal('.'), mode: modeSchema, ...sharedOutput });
 // No top-level mode in multi mode: with mixed modes no single value is true (ADR-008 Amendment).
 const multiOutputSchema = z.object({ workspaces: z.array(z.object({ name: z.string(), mode: modeSchema })), ...sharedOutput });
 
-/** `serverVersion` is passed in because `server.ts`, which owns `SERVER_VERSION`, imports this module. */
-export function registerWorkspaceInfo(server: McpServer, { config, audit }: ToolDeps, serverVersion: string): void {
-  const versionNote = '`server_version` is the running server\'s version.';
+/** The version and build are passed in because `server.ts`, which owns `SERVER_VERSION` and `SERVER_BUILD`, imports this module. */
+export function registerWorkspaceInfo(server: McpServer, { config, audit }: ToolDeps, serverVersion: string, serverBuild: string): void {
+  const versionNote =
+    '`server_version` is the running server\'s version, and `server_build` the commit it was built from ' +
+    '(`-dirty` if built with uncommitted changes, `unknown` when run from source).';
   const description = config.multi
     ? 'Describe the workspaces this server exposes: their names, each one\'s access mode (read-only or read-write), platform, and limits. ' +
       'Pass a name as `workspace` to the other tools; their paths are relative to that workspace root ".". Host paths are never revealed. ' +
@@ -47,6 +51,7 @@ export function registerWorkspaceInfo(server: McpServer, { config, audit }: Tool
     },
     git: config.git,
     server_version: serverVersion,
+    server_build: serverBuild,
   };
   const single = config.workspaces[0];
   const result = config.multi

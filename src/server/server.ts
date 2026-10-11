@@ -18,6 +18,9 @@ import { registerWriteFile } from '../tools/write-file.js';
 export const SERVER_NAME = 'private-workspace-mcp';
 // Keep in sync with the `version` in package.json.
 export const SERVER_VERSION = '0.2.0';
+// `pnpm bundle` replaces this global with the checkout's commit (esbuild `define`, M84). tsx and `dist/` runs have none.
+declare const __SERVER_BUILD__: string | undefined;
+export const SERVER_BUILD = typeof __SERVER_BUILD__ === 'string' ? __SERVER_BUILD__ : 'unknown';
 
 /**
  * Returns the factory `serveStdio` calls to build the instance serving a connection. `git` is the
@@ -32,7 +35,7 @@ export function createServerFactory(config: Config, audit: AuditSink = stderrAud
   const deps = { config, workspaces, audit };
   return () => {
     const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-    registerWorkspaceInfo(server, deps, SERVER_VERSION);
+    registerWorkspaceInfo(server, deps, SERVER_VERSION, SERVER_BUILD);
     registerListDirectory(server, deps);
     registerReadFile(server, deps);
     registerWriteFile(server, deps);

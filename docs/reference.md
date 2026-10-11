@@ -19,7 +19,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 
 | tool | 설명 |
 |------|------|
-| `get_workspace_info` | workspace 이름과 mode(`WORKSPACE_ROOTS`면 `workspaces: [{ name, mode }]` 목록), platform, limits, `server_version`(실행 중인 서버 version. 배포된 release 확인용). host 절대 경로는 반환하지 않음 |
+| `get_workspace_info` | workspace 이름과 mode(`WORKSPACE_ROOTS`면 `workspaces: [{ name, mode }]` 목록), platform, limits, `server_version`(실행 중인 서버 version. 배포된 release 확인용), `server_build`(bundle한 commit 12자리. commit하지 않은 변경이 있었으면 `-dirty`가 붙고, source(`tsx`, `dist/`)로 띄우면 `unknown`). host 절대 경로는 반환하지 않음 |
 | `list_directory` | `path`(기본 `.`), `depth`(기본 1), `limit`. 이름순, depth-first. symlink는 따라가지 않고 민감 파일과 특수 파일은 생략 |
 | `read_file` | UTF-8 텍스트 파일. `start_line`/`max_lines`로 line pagination. 파일 전체 기준 `revision`(`sha256:…`) 반환 |
 | `write_file` | 파일 생성 또는 전체 교체. 기존 파일은 `expected_revision` 필수, 새 파일은 생략. read limit을 넘는 기존 파일은 교체 불가. 없는 parent directory는 생성. `dry_run: true`면 모든 검사만 하고 쓰지 않은 채 쓸 때의 `revision`, `created`, unified `diff`를 반환(형식은 `edit_file`과 같고, 새 파일은 `--- /dev/null`, binary·non-UTF-8 파일을 교체할 때는 `Binary files ... differ` 한 줄) |
@@ -94,6 +94,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 - 정수 설정은 1 이상 `Number.MAX_SAFE_INTEGER` 이하여야 한다.
 - 값이 잘못되면 stderr에 이유를 출력하고 exit code 1로 종료한다(fail closed).
 - stdout은 MCP protocol 전용이다. startup 메시지는 stderr로, audit log는 `WORKSPACE_AUDIT_LOG`가 있으면 그 파일로, 없으면 stderr로 나간다.
+- startup 메시지와 `--check` 첫 줄은 `private-workspace-mcp <version>+<build>`로 시작한다. `<build>`는 `get_workspace_info`의 `server_build`와 같다.
 
 ### CLI 인자
 
@@ -101,7 +102,7 @@ tool 인자와 동작, error code, 환경 변수 전체 목록이다. 처음 연
 |------|------|
 | (없음) | stdio MCP 서버로 대기 |
 | `--check` | 서버를 띄우지 않고 startup과 같은 검증만 한 뒤, 해석된 workspace root(canonical 경로)와 mode, limit, audit 출력처, 내용 검사 여부를 stderr에 요약한다. 설정이 틀리면 startup과 같은 오류를 내고 exit 1이다. `WORKSPACE_AUDIT_LOG`가 있으면 그 파일과 부모 directory에 쓸 수 있는지도 확인해 쓸 수 없으면 exit 1이다(serve는 이때 audit을 stderr로 보낸다). audit file은 만들지 않는다 |
-| `--version` | version 출력 |
+| `--version` | version 출력(build는 넣지 않음) |
 
 그 밖의 인자를 주면 usage를 내고 exit 2로 끝난다.
 

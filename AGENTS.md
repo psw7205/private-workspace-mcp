@@ -43,7 +43,7 @@ pnpm install --frozen-lockfile
 pnpm typecheck      # tsc (TypeScript 7), noEmit
 pnpm test           # vitest: unit + stdio integration (서버 process를 직접 spawn)
 pnpm build          # tsc -p tsconfig.build.json -> dist/index.js
-pnpm bundle         # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS
+pnpm bundle         # release/: index.mjs, THIRD_PARTY_LICENSES.txt, SHA256SUMS (Git checkout 필요, M84)
 pnpm e2e:tunnel     # build 후 tunnel-client dev proxy 경유 e2e (tunnel-client 필요, OpenAI credential 불필요)
 pnpm install:local  # clean tree 검증·bundle 후 ~/.local/share/private-workspace-mcp/v<version>-<commit>에 설치하고 current 전환 (macOS, Linux)
 ```
@@ -52,7 +52,7 @@ pnpm install:local  # clean tree 검증·bundle 후 ~/.local/share/private-works
 
 - 로컬에서 tool을 직접 호출해 보려면 `npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.js`. 서버 환경 변수는 `-e`로 넘긴다.
 - `pnpm e2e:tunnel`은 `tunnel-client dev proxy --mcp-command`로 local control plane을 띄워 `tunnel-client → stdio` 경로 전체를 검증한다. legacy와 `2026-07-28` 양쪽 era, revision conflict, escape와 deny 거부, `WORKSPACE_ROOTS`·`WORKSPACE_READ_WRITE` multi case, `WORKSPACE_GIT=read-only` repo의 Git tool 호출, tunnel-client 종료 시 child 정리를 확인한다.
-- `TEST_SERVER_ENTRY=release/index.mjs`를 주면 `test/stdio.test.ts`와 `pnpm e2e:tunnel`이 source 대신 bundle을 실행한다.
+- `TEST_SERVER_ENTRY=release/index.mjs`를 주면 `test/stdio.test.ts`와 `pnpm e2e:tunnel`이 source 대신 bundle을 실행한다. stdio test는 bundle의 `server_build`가 지금 checkout의 commit·dirty 여부와 같은지도 보므로, bundle 뒤에 commit하거나 tracked 파일을 고쳤다면 다시 bundle한다.
 - CI(`.github/workflows/ci.yml`)는 ubuntu, macOS, windows에서 typecheck, test, build를 실행하고, bundle로 stdio test를 한 번 더 돌린다.
 - 로컬 daemon으로 dogfooding할 때는 `pnpm install:local` 뒤 daemon을 재시작한다. profile이 repo의 `dist/`를 직접 가리키게 하지 않는다. 개발 중 `pnpm build`가 검증 안 된 build를 daemon에 올린다.
 - ChatGPT UI(hosted) 경로 확인은 `docs/hosted-verification.md`의 수동 절차를 따른다.

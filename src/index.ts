@@ -2,7 +2,7 @@
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { assertAuditLogWritable, createAuditSink } from './audit/audit-log.js';
-import { describeConfig, parseCli, USAGE } from './cli.js';
+import { describeConfig, parseCli, SERVER_LABEL, USAGE } from './cli.js';
 import { loadConfig } from './config/config.js';
 import { detectGit, GitRunner, type GitInstallation } from './git/runner.js';
 import { createServerFactory, SERVER_NAME, SERVER_VERSION } from './server/server.js';
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   const described = config.multi
     ? `workspaces ${config.workspaces.map(({ name, mode }) => `"${name}" ${mode}`).join(', ')}`
     : config.workspaces.map(({ name, mode }) => `workspace "${name}", ${mode}`).join('');
-  console.error(`${SERVER_NAME} listening on stdio (${described}${git ? ', git read-only' : ''})`);
+  console.error(`${SERVER_LABEL} listening on stdio (${described}${git ? ', git read-only' : ''})`);
 }
 
 void main();

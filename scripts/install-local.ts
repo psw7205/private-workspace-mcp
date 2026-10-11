@@ -7,13 +7,16 @@
  *
  * The install dir is PRIVATE_WORKSPACE_MCP_INSTALL_DIR, or ~/.local/share/private-workspace-mcp.
  * Only a clean tracked tree that passes typecheck and test is installed, and `current` moves only
- * after the installed entry reports the package version. Run with `pnpm install:local`. POSIX only.
+ * after the installed entry reports the package version and the commit. Run with `pnpm install:local`.
+ * POSIX only.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { checkoutState } from './bundle.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -68,20 +71,24 @@ export async function installRelease({ releaseDir, installDir, name, verify }: I
   return { target, previous, reused };
 }
 
-function git(...args: string[]): string {
-  return execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' }).trim();
-}
-
 function pnpm(script: string): void {
   execFileSync('pnpm', [script], { cwd: projectRoot, stdio: 'inherit' });
 }
 
+/** `<version>+<build>` from the first `--check` line, the only CLI output that shows the build. */
+function reportedLabel(entry: string): string {
+  // `--check` needs a workspace; the checkout is one. Only WORKSPACE_ROOT is passed so the caller's WORKSPACE_* cannot fail it.
+  const { status, stderr } = spawnSync(process.execPath, [entry, '--check'], { env: { WORKSPACE_ROOT: projectRoot }, encoding: 'utf8' });
+  const label = /^private-workspace-mcp (\S+): configuration OK /.exec(stderr)?.[1];
+  if (status !== 0 || label === undefined) throw new Error(`${entry} --check failed: ${stderr.trim()}`);
+  return label;
+}
+
 async function main(): Promise<void> {
   if (process.platform === 'win32') throw new Error('install:local supports macOS and Linux only');
-  const dirty = git('status', '--porcelain', '--untracked-files=no');
-  if (dirty !== '') throw new Error(`tracked files have uncommitted changes:\n${dirty}`);
+  const { commit, changes } = checkoutState();
+  if (changes !== '') throw new Error(`tracked files have uncommitted changes:\n${changes}`);
 
-  const commit = git('rev-parse', '--short=12', 'HEAD');
   const { version } = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8')) as { version: string };
   pnpm('typecheck');
   pnpm('test');
@@ -95,6 +102,9 @@ async function main(): Promise<void> {
     verify: (entry) => {
       const reported = execFileSync(process.execPath, [entry, '--version'], { encoding: 'utf8' }).trim();
       if (reported !== version) throw new Error(`${entry} reports version ${reported}, expected ${version}`);
+      // A different build means HEAD or the tree changed while typecheck, test, and bundle ran.
+      const label = reportedLabel(entry);
+      if (label !== `${version}+${commit}`) throw new Error(`${entry} reports ${label}, expected ${version}+${commit}`);
     },
   });
 

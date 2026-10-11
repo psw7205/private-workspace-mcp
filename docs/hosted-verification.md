@@ -16,7 +16,7 @@
 ## 0. 준비
 
 - [`getting-started.md`](getting-started.md) 3~5절을 따라 tunnel, `.env`(`TUNNEL_ID`, `API_KEY`), ChatGPT connector(Developer mode, Tunnel, 인증 없음)가 이미 있다고 가정한다. connector는 `tunnel_id`에 묶이므로 새로 만들지 않는다.
-- 검증 대상 기능은 `v0.1.0` release에 없다. `<repo-root>`에서 검증할 `main` commit을 checkout하고 `pnpm install --frozen-lockfile && pnpm build`로 `dist/index.js`를 만든다. commit hash를 기록해 둔다.
+- 검증 대상 기능은 `v0.1.0` release에 없다. `<repo-root>`에서 검증할 `main` commit을 checkout하고 `pnpm install --frozen-lockfile && pnpm bundle`로 `release/index.mjs`를 만든다. commit hash(`git rev-parse --short=12 HEAD`)를 기록해 둔다.
 - tunnel 하나에는 `tunnel-client` instance 하나만 띄운다. 평소 쓰는 `tunnel-client run`이 떠 있으면 먼저 멈춘다.
 - 같은 `tunnel-client`에 2025-era(legacy) client를 붙이지 않는다. child가 legacy로 pin되면 이후 ChatGPT 요청이 실패한다(implementation notes M78).
 - ChatGPT의 write tool 호출 확인은 켠 채로 둔다([`security.md`](security.md#prompt-injection과-client-승인)).
@@ -52,7 +52,7 @@ printf '# Plan\n\nstatus: draft\nowner: TBD\nTODO: a\nTODO: b\n' > "$F/web/docs/
 set -a && . ./.env && set +a
 tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp-verify \
   --tunnel-id "$TUNNEL_ID" \
-  --mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY WORKSPACE_ROOTS=api=<fixture>/api,web=<fixture>/web WORKSPACE_READ_WRITE=web WORKSPACE_AUDIT_LOG=<fixture>/audit/audit.jsonl $(mise which node) <repo-root>/dist/index.js"
+  --mcp-command "env -u CONTROL_PLANE_API_KEY -u OPENAI_API_KEY WORKSPACE_ROOTS=api=<fixture>/api,web=<fixture>/web WORKSPACE_READ_WRITE=web WORKSPACE_AUDIT_LOG=<fixture>/audit/audit.jsonl $(mise which node) <repo-root>/release/index.mjs"
 ```
 
 - `WORKSPACE_MODE`는 넣지 않는다. `WORKSPACE_READ_WRITE`와 함께 주면 값과 상관없이 startup이 거부된다(M37).
@@ -68,7 +68,7 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp-verif
 1. **connector Refresh**: https://chatgpt.com/plugins 에서 connection을 열고 Refresh를 누른 뒤 새 대화를 시작한다([`getting-started.md`](getting-started.md#업그레이드와-rollback)의 반영 순서).
    - 기대: tool 8개(`get_workspace_info`, `list_directory`, `read_file`, `write_file`, `edit_file`, `multi_edit_file`, `find_files`, `search_text`). UI에 schema가 보이면 `get_workspace_info`를 뺀 7개에 필수 인자 `workspace`(enum `api`, `web`)가 있는지 본다. 보이지 않으면 3~7단계의 인자로 대신 확인한다.
 2. **`get_workspace_info`**: "private workspace connector의 `get_workspace_info`를 호출하고 결과 JSON을 그대로 보여줘."
-   - 기대: `workspaces: [{ name: "api", mode: "read-only" }, { name: "web", mode: "read-write" }]`, `platform`, `limits`, `server_version`(배포한 `package.json` version과 같음). top-level `mode`가 없고 host 경로가 없다.
+   - 기대: `workspaces: [{ name: "api", mode: "read-only" }, { name: "web", mode: "read-write" }]`, `platform`, `limits`, `server_version`(배포한 `package.json` version과 같음), `server_build`(0절에서 기록한 commit. `-dirty`나 `unknown`이면 기록한 commit의 build가 아니다). top-level `mode`가 없고 host 경로가 없다.
 3. **`list_directory`**: "api workspace의 최상위 목록을 보여줘."
    - 기대: `workspace: "api"`로 호출. `.gitignore`, `debug.log`, `src`가 보이고 `.env`는 목록에 없다(M4). `list_directory`는 ignore 파일을 적용하지 않으므로 `debug.log`는 보인다(M23).
 4. **deny**: "api workspace의 `.env`를 읽어줘."
@@ -152,7 +152,7 @@ curl -s https://api.openai.com/v1/responses \
    printf 'export const marker = "needle2";\n' > src/app.ts
    ```
 
-2. 2절 `--mcp-command`의 `env -u ...` 뒤에 `WORKSPACE_GIT=read-only`를 더해 profile을 다시 만든다. 띄우기 전에 같은 env로 `node <repo-root>/dist/index.js --check`를 실행해 마지막 줄이 `git: read-only (git <version> at <path>)`인지 본다.
+2. 2절 `--mcp-command`의 `env -u ...` 뒤에 `WORKSPACE_GIT=read-only`를 더해 profile을 다시 만든다. 띄우기 전에 같은 env로 `node <repo-root>/release/index.mjs --check`를 실행해 마지막 줄이 `git: read-only (git <version> at <path>)`인지 본다.
 3. tool 목록이 12개로 바뀌므로 connector를 Refresh하고 새 대화를 시작한다.
 4. ChatGPT에 요청하고 결과를 확인한다.
 
