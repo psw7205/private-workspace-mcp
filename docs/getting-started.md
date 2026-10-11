@@ -189,7 +189,7 @@ systemctl --user restart tunnel-client-workspace-mcp
 4. tool 8개(`WORKSPACE_GIT=read-only`면 12개)가 발견되는지 확인한다.
 5. 새 대화에서 "workspace 정보를 보여줘"처럼 물어 `get_workspace_info`가 호출되는지 본다.
 
-write tool 호출 확인은 끄지 않는다([`security.md`](security.md#prompt-injection과-client-승인)).
+write tool 호출 확인은 끄지 않는다. 다만 ChatGPT는 확인 없이 쓰기 tool을 실행할 수도 있다([`security.md`](security.md#prompt-injection과-client-승인)).
 
 Responses API에서는 `tools: [{"type": "mcp", "server_label": "private_workspace", "tunnel_id": "tunnel_..."}]`로 같은 tunnel을 쓸 수 있다(`server_url`은 쓰지 않음).
 

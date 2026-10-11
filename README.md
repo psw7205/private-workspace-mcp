@@ -125,7 +125,7 @@ npx @modelcontextprotocol/inspector -e WORKSPACE_ROOT="$PWD" -- node dist/index.
 
 ## 보안
 
-path 검증은 defense-in-depth이고, 최종 경계는 전용 OS 사용자나 container 같은 OS 권한이다. read-write 모드에서는 파일에 심어진 prompt injection이 쓰기 호출로 이어질 수 있으므로 ChatGPT의 write 확인을 끄지 않고, 다른 client에서는 write tool 호출 전에 확인을 받는지 확인한 뒤에만 read-write를 켠다. 방어 계층, Git hardening, client 승인 설정은 [보안 모델](docs/security.md)에 있다.
+path 검증은 defense-in-depth이고, 최종 경계는 전용 OS 사용자나 container 같은 OS 권한이다. read-write 모드에서는 파일에 심어진 prompt injection이 쓰기 호출로 이어질 수 있다. client의 write 확인은 끄지 않되, ChatGPT도 확인 없이 쓰기 tool을 실행할 수 있으므로 확인 없는 쓰기를 받아들일 수 있는 workspace만 read-write로 둔다. 방어 계층, Git hardening, client 승인 설정은 [보안 모델](docs/security.md)에 있다.
 
 ## 문서
 

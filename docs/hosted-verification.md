@@ -82,7 +82,7 @@ tunnel-client init --sample sample_mcp_stdio_local --profile workspace-mcp-verif
 8. **read-only workspace에 쓰기**: "api workspace에 `NOTES.md`를 만들고 `hello`라고 써줘." 다음 "api의 `src/app.ts`에서 `needle`을 `pin`으로 바꿔줘." 마지막으로 "같은 변경을 `multi_edit_file`로 해줘."
    - 기대(M38): model이 description의 `Writable workspaces: web. Other workspaces fail with READ_ONLY.`를 보고 호출 전에 거절하거나, 호출하면 `write_file`·`edit_file`·`multi_edit_file` 모두 `READ_ONLY`. 어느 쪽이었는지 기록한다. `<fixture>/api`에 변화가 없다.
 9. **`edit_file` revision 흐름**: "web의 `docs/plan.md`에서 `status: draft`를 `status: review`로 바꿔줘."
-   - 기대: ChatGPT가 write 확인을 묻는다. 승인하면 성공하고 새 `revision` R2를 반환한다.
+   - 기대: 성공하고 새 `revision` R2를 반환한다. ChatGPT가 write 확인을 물었는지 기록한다(묻지 않고 실행할 수 있다, [`security.md`](security.md#prompt-injection과-client-승인)).
    - 이어서 "`TODO`를 `DONE`으로 바꿔줘. `replace_all`은 쓰지 마." → `EDIT_AMBIGUOUS`.
    - 이어서 "7단계의 revision R1을 `expected_revision`으로 그대로 써서 `owner: TBD`를 `owner: x`로 바꿔줘. 다시 읽지 마." → `REVISION_CONFLICT`. 파일은 바뀌지 않는다.
 10. **`multi_edit_file`**: "web의 `docs/plan.md`를 다시 읽고, `multi_edit_file` 한 번으로 `owner: TBD`→`owner: web-team`, `TODO: a`→`DONE: a`를 적용해줘."
